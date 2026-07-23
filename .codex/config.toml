@@ -1,0 +1,16 @@
+# Robin's SAFE harness defaults. User-level authentication and model settings
+# intentionally remain outside the repository.
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+personality = "pragmatic"
+project_doc_max_bytes = 65536
+
+[agents]
+enabled = true
+max_concurrent_threads_per_session = 5
+
+[features]
+multi_agent = true
+shell_snapshot = true
+shell_tool = true
+

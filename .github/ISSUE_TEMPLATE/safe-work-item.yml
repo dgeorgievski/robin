@@ -1,0 +1,80 @@
+name: SAFE work item
+description: Track a Robin change through SAFE gates and resumable checkpoints.
+title: "[ROB] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this issue as the durable system of record. Agents append versioned
+        SAFE checkpoint comments at gates, blockers, and interruptions.
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: Describe the user-visible or operational result.
+      placeholder: What should be true when this work is complete?
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope and non-goals
+      description: State what is included and explicitly excluded.
+      placeholder: |
+        In scope:
+        - ...
+
+        Not in scope:
+        - ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance-criteria
+    attributes:
+      label: Acceptance criteria
+      description: Add observable, testable criteria as a checklist.
+      placeholder: |
+        - [ ] Given ..., when ..., then ...
+        - [ ] Invalid input fails safely without exposing sensitive data.
+    validations:
+      required: true
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and trust boundaries
+      description: Identify sensitive assets, authorization concerns, and required human decisions. Never include secret values.
+      placeholder: Assets, actors, trust boundaries, failure modes, and approvals.
+    validations:
+      required: true
+
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies and blockers
+      description: Link blocking or blocked GitHub issues and record ordering constraints.
+      placeholder: "Blocked by #...; blocks #..."
+
+  - type: textarea
+    id: definition-of-done
+    attributes:
+      label: Definition of Done
+      description: List the evidence and gates required before human review.
+      placeholder: |
+        - [ ] Implementation complete
+        - [ ] Relevant tests and static checks pass
+        - [ ] QAS checkpoint records independent approval
+        - [ ] Documentation and residual risks are current
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: readiness
+    attributes:
+      label: Readiness
+      options:
+        - label: I have not included credentials, keys, secret values, or sensitive fixtures in this issue.
+          required: true
