@@ -30,3 +30,9 @@ doc/api/
 
 # Temporary dirs
 issues/
+
+# Rust build output
+target/
+
+# Local browser-runner evidence artifacts
+.playwright-cli/

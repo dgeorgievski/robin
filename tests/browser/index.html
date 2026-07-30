@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>ROB-2 WASM resolver evidence</title>
+    <link rel="icon" href="data:,">
+  </head>
+  <body>
+    <main>
+      <h1>ROB-2 WASM resolver evidence</h1>
+      <output id="result" aria-live="polite">RUNNING</output>
+    </main>
+    <script type="module">
+      import init, { resolve_webvh } from "/target/browser-release/robin_did_resolver_spike.js";
+
+      const result = document.querySelector("#result");
+      try {
+        await init();
+        const response = await fetch("/tests/fixtures/basic-create/input.json");
+        const input = await response.text();
+        const resolved = JSON.parse(await resolve_webvh(input));
+        const expectedDid =
+          "did:webvh:QmUy89VrfryQ254CeHZzQfmcKqByPoKNGqYykP3SeXuegQ:example.com";
+        if (
+          resolved.didDocument.id !== expectedDid ||
+          resolved.metadata.versionNumber !== 1 ||
+          resolved.metadata.completeHistoryVerified !== true
+        ) {
+          throw new Error("unexpected verified result");
+        }
+        result.textContent =
+          `PASS ${resolved.didDocument.id} ${resolved.metadata.versionId}`;
+      } catch (error) {
+        result.textContent = `FAIL ${error}`;
+      }
+    </script>
+  </body>
+</html>
