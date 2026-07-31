@@ -12,6 +12,8 @@ async fn main() {
         .expect("authoritative fixture must resolve");
     println!(
         "{} {} {}",
-        output.did_document["id"], output.metadata.version_id, output.evidence.log_sha256
+        output.did_document()["id"],
+        output.metadata.version_id,
+        output.evidence.log_sha256
     );
 }

@@ -1,5 +1,5 @@
 use robin_did_resolver_spike::{DidResolver, ResolutionError, ResolutionInput, WebvhResolver};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 const DID_BASIC: &str = "did:webvh:QmUy89VrfryQ254CeHZzQfmcKqByPoKNGqYykP3SeXuegQ:example.com";
 const DID_PREROTATION: &str =
@@ -20,36 +20,30 @@ fn with_log(did: &str, path: &str, raw_log: &str) -> ResolutionInput {
 }
 
 #[tokio::test]
-async fn selects_only_keys_in_the_requested_relationship() {
-    let mut output = WebvhResolver.resolve(fixture()).await.unwrap();
+async fn selects_only_keys_cryptographically_bound_to_verified_state() {
+    let output = WebvhResolver.resolve(fixture()).await.unwrap();
     let authentication = output.authorized_keys("authentication").unwrap();
     assert_eq!(authentication.len(), 1);
     assert!(authentication[0].id.ends_with("#P5RDjVJG"));
 
     let agreement_id = format!("{DID_BASIC}#agreement-1");
-    output
-        .did_document
+    let mut presentation = output.did_document_copy();
+    presentation
         .get_mut("verificationMethod")
         .and_then(Value::as_array_mut)
         .unwrap()
-        .push(json!({
+        .push(serde_json::json!({
             "id": agreement_id,
             "type": "Multikey",
             "controller": DID_BASIC,
             "publicKeyMultibase": "z6LSkeyAgreementEvidenceOnly"
         }));
-    output.did_document["keyAgreement"] = json!([agreement_id]);
-
-    let agreement = output.authorized_keys("keyAgreement").unwrap();
-    assert_eq!(agreement.len(), 1);
-    assert!(agreement[0].id.ends_with("#agreement-1"));
-    assert_ne!(authentication[0].id, agreement[0].id);
-
-    output.did_document["keyAgreement"] = json!([authentication[0].id]);
-    assert_eq!(
-        output.authorized_keys("keyAgreement").unwrap()[0].id,
-        authentication[0].id
-    );
+    presentation["keyAgreement"] = serde_json::json!([agreement_id]);
+    assert!(output.did_document().get("keyAgreement").is_none());
+    assert!(matches!(
+        output.authorized_keys("keyAgreement"),
+        Err(ResolutionError::MissingRelationship(_))
+    ));
     assert!(matches!(
         output.authorized_keys("assertionMethod"),
         Err(ResolutionError::MissingRelationship(_))
@@ -58,18 +52,10 @@ async fn selects_only_keys_in_the_requested_relationship() {
 
 #[tokio::test]
 async fn rejects_dangling_or_malformed_relationship_entries() {
-    let mut output = WebvhResolver.resolve(fixture()).await.unwrap();
-    output.did_document["authentication"] = json!(["#missing"]);
-    assert!(matches!(
-        output.authorized_keys("authentication"),
-        Err(ResolutionError::MissingRelationship(_))
-    ));
-
-    output.did_document["authentication"] = json!([7]);
-    assert!(matches!(
-        output.authorized_keys("authentication"),
-        Err(ResolutionError::MalformedInput(_))
-    ));
+    let output = WebvhResolver.resolve(fixture()).await.unwrap();
+    let mut detached = output.did_document_copy();
+    detached["authentication"] = serde_json::json!(["#missing", 7]);
+    assert_eq!(output.authorized_keys("authentication").unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -136,6 +122,49 @@ async fn rejects_wrong_or_omitted_pre_rotation_reveal() {
     assert!(WebvhResolver.resolve(omitted).await.is_err());
 }
 
+#[tokio::test]
+async fn compromised_current_key_cannot_bypass_prior_commitment() {
+    let input = with_log(
+        "did:webvh:QmXpqXh9uM1rN2uBuHQB4qdGUMfJsEouwz8Yn8RaaTXgKq:example.com",
+        "vectors/negative-pre-rotation-omit-updatekeys/ts",
+        include_str!("fixtures/pre-rotation-compromised-current-key/did.jsonl"),
+    );
+    assert!(matches!(
+        WebvhResolver.resolve(input).await,
+        Err(ResolutionError::InvalidHistory(_) | ResolutionError::InvalidProof(_))
+    ));
+}
+
+#[tokio::test]
+async fn malformed_reused_and_missing_next_commitments_fail_closed() {
+    let base = with_log(
+        DID_PREROTATION,
+        "vectors/pre-rotation-consume/ts",
+        include_str!("fixtures/pre-rotation-consume/did.jsonl"),
+    );
+    for raw_log in [
+        base.raw_log.replacen(
+            "QmdP2WQEBfT4vht72FZ2p2X7airS3FxmaGuoHgHQoDW1u9",
+            "malformed",
+            1,
+        ),
+        base.raw_log.replacen(
+            "QmdP2WQEBfT4vht72FZ2p2X7airS3FxmaGuoHgHQoDW1u9",
+            "Qmf2V5jB2UwPcFL5bvmKed7VvY3CSQ1RXyDdtip7ufpQ3R",
+            1,
+        ),
+        base.raw_log.replacen(
+            "\"nextKeyHashes\":[\"QmdP2WQEBfT4vht72FZ2p2X7airS3FxmaGuoHgHQoDW1u9\"],",
+            "",
+            1,
+        ),
+    ] {
+        let mut input = base.clone();
+        input.raw_log = raw_log;
+        assert!(WebvhResolver.resolve(input).await.is_err());
+    }
+}
+
 fn witness_fixture() -> ResolutionInput {
     let mut input = with_log(
         DID_WITNESS,
@@ -196,13 +225,91 @@ async fn rejects_witness_replay_signature_tamper_and_body_fragment_mismatch() {
 }
 
 #[tokio::test]
-async fn duplicate_witness_proof_does_not_change_distinct_threshold_result() {
+async fn duplicate_witness_proof_is_a_typed_profile_failure() {
     let mut input = witness_fixture();
     let mut witness: Value = serde_json::from_str(input.raw_witnesses.as_deref().unwrap()).unwrap();
     let proof = witness[0]["proof"][0].clone();
     witness[0]["proof"].as_array_mut().unwrap().push(proof);
     input.raw_witnesses = Some(serde_json::to_string(&witness).unwrap());
-    assert!(WebvhResolver.resolve(input).await.is_ok());
+    assert!(matches!(
+        WebvhResolver.resolve(input).await,
+        Err(ResolutionError::InvalidWitness(message)) if message.contains("duplicate witness proof")
+    ));
+}
+
+fn witness_update_fixture() -> ResolutionInput {
+    let mut input = with_log(
+        "did:webvh:QmR72NXg5DyrNL1PXwk4kiZEJxS1RJxvFEtSu9wPSZkp1u:example.com",
+        "vectors/witness-update/ts",
+        include_str!("fixtures/witness-update/did.jsonl"),
+    );
+    input.raw_witnesses = Some(include_str!("fixtures/witness-update/did-witness.json").into());
+    input
+}
+
+#[tokio::test]
+async fn witness_threshold_two_of_two_and_negative_matrix_are_enforced() {
+    let base = witness_update_fixture();
+    assert_eq!(
+        WebvhResolver
+            .resolve(base.clone())
+            .await
+            .unwrap()
+            .metadata
+            .version_number,
+        2
+    );
+
+    let witness: Value = serde_json::from_str(base.raw_witnesses.as_deref().unwrap()).unwrap();
+    let cases = [
+        ("insufficient subset", {
+            let mut value = witness.clone();
+            value[0]["proof"].as_array_mut().unwrap().pop();
+            value
+        }),
+        ("duplicate witness identity", {
+            let mut value = witness.clone();
+            value[0]["proof"][1]["verificationMethod"] =
+                value[0]["proof"][0]["verificationMethod"].clone();
+            value
+        }),
+        ("unsupported proof type", {
+            let mut value = witness.clone();
+            value[0]["proof"][0]["type"] = Value::String("UnsupportedProof".into());
+            value
+        }),
+        ("forged proof", {
+            let mut value = witness.clone();
+            value[0]["proof"][0]["proofValue"] = Value::String("zForged".into());
+            value
+        }),
+    ];
+    for (label, value) in cases {
+        let mut input = base.clone();
+        input.raw_witnesses = Some(serde_json::to_string(&value).unwrap());
+        assert!(
+            WebvhResolver.resolve(input).await.is_err(),
+            "accepted {label}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn malformed_zero_impossible_and_duplicate_witness_configuration_fail() {
+    let base = witness_fixture();
+    for raw_log in [
+        base.raw_log.replacen("\"threshold\":1", "\"threshold\":0", 1),
+        base.raw_log.replacen("\"threshold\":1", "\"threshold\":2", 1),
+        base.raw_log.replacen(
+            "]},\"deactivated\"",
+            ",{\"id\":\"did:key:z6Mkrv5Cm2XCLumMPTqooLTCw6YDf421d7VdTziwrZ8vNf4L\"}]},\"deactivated\"",
+            1,
+        ),
+    ] {
+        let mut input = base.clone();
+        input.raw_log = raw_log;
+        assert!(WebvhResolver.resolve(input).await.is_err());
+    }
 }
 
 #[tokio::test]
@@ -212,8 +319,51 @@ async fn deactivation_is_a_fail_closed_typed_result() {
         "vectors/deactivate/ts",
         include_str!("fixtures/deactivate/did.jsonl"),
     );
-    assert_eq!(
-        WebvhResolver.resolve(input).await.unwrap_err(),
-        ResolutionError::Deactivated
+    let error = WebvhResolver.resolve(input).await.unwrap_err();
+    let ResolutionError::Deactivated(tip) = error else {
+        panic!("expected typed deactivation")
+    };
+    assert_eq!(tip.version_number, 2);
+    assert!(tip.deactivated);
+}
+
+#[tokio::test]
+async fn deactivation_is_irreversible_against_appends_and_stale_restore() {
+    let deactivation = with_log(
+        DID_BASIC,
+        "vectors/deactivate/ts",
+        include_str!("fixtures/deactivate/did.jsonl"),
     );
+    let ResolutionError::Deactivated(tip) = WebvhResolver
+        .resolve(deactivation.clone())
+        .await
+        .unwrap_err()
+    else {
+        panic!("expected typed deactivation")
+    };
+    let freshness = robin_did_resolver_spike::Freshness {
+        known_did: Some(DID_BASIC.into()),
+        known_version_id: Some(tip.version_id.clone()),
+        known_log_sha256: None,
+        known_history_prefix_sha256: Some(tip.history_prefix_sha256.clone()),
+        known_deactivated: true,
+    };
+
+    let mut stale = fixture();
+    stale.freshness = freshness.clone();
+    assert!(matches!(
+        WebvhResolver.resolve(stale).await,
+        Err(ResolutionError::StaleState(_))
+    ));
+
+    let mut appended = deactivation;
+    let update = include_str!("fixtures/basic-update/did.jsonl")
+        .lines()
+        .nth(1)
+        .unwrap();
+    appended
+        .raw_log
+        .push_str(&update.replacen("2-Qmbcn", "3-Qmbcn", 1));
+    appended.freshness = freshness;
+    assert!(WebvhResolver.resolve(appended).await.is_err());
 }

@@ -8,9 +8,9 @@
 mod resolver;
 
 pub use resolver::{
-    AuthorizedKey, DidResolver, Evidence, EvidenceFetcher, FetchError, FetchedEvidence, Freshness,
-    ResolutionError, ResolutionInput, ResolutionMetadata, ResolutionOutput, SourceKind,
-    TransportPolicy, WebvhResolver,
+    AuthorizedKey, DidResolver, Evidence, EvidenceFetcher, EvidenceSource, FetchError,
+    FetchedEvidence, Freshness, ResolutionError, ResolutionInput, ResolutionMetadata,
+    ResolutionOutput, SourceAttempt, SourceKind, TransportPolicy, VerifiedTip, WebvhResolver,
 };
 
 #[cfg(feature = "wasm")]

@@ -24,6 +24,10 @@ The non-interactive command set is:
 - `make run` resolves the pinned TypeScript inception fixture locally.
 - `make wasm-check` compiles the local verifier for `wasm32-unknown-unknown`
   with the Rustup stable toolchain after that target has been installed.
+- `make interop` fetches exact pinned test-suite and TypeScript revisions into
+  a temporary directory, builds the independent resolver, and runs the
+  reciprocal interoperability check. It requires Node 24, Bun, Corepack, and
+  network access on the first run.
 
 No development server is applicable to this library-only spike. Network failure
 tests use deterministic injected evidence; the core resolver never needs a

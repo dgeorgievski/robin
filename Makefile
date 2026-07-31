@@ -1,4 +1,4 @@
-.PHONY: setup test lint run wasm-check
+.PHONY: setup test lint run wasm-check interop
 
 setup:
 	rustc --version
@@ -17,3 +17,6 @@ run:
 
 wasm-check:
 	PATH=$$HOME/.cargo/bin:$$PATH rustup run stable cargo check --locked --target wasm32-unknown-unknown --features wasm --no-default-features
+
+interop:
+	bash scripts/interop.sh
