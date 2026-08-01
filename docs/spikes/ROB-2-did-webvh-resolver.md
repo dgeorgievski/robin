@@ -45,8 +45,10 @@ has TypeScript process a Robin-verified and reserialized log.
 The v1.0 method mandates SHA-256, multihash/base58btc, JCS (RFC 8785), and
 `eddsa-jcs-2022` for the exercised histories. Robin does not invent or select
 these primitives here. The experimental key-selection allow-list accepts only
-the method's exercised Multikey forms: `z6Mk` for authentication and `z6LS`
-for key agreement. This is test policy, not production cryptographic approval.
+decoded Ed25519-pub Multikeys for authentication and decoded X25519-pub
+Multikeys for key agreement. Familiar Base58BTC text such as `z6Mk` or `z6LS`
+is not evidence of the key type. This is test policy, not production
+cryptographic approval.
 
 ## Enforced limits and trust contract
 
@@ -82,6 +84,85 @@ IDs, duplicate or dangling relationship references, embedded methods,
 wrong-controller methods, unsupported types, empty/ambiguous/conflicting key
 material, and wrong-relationship substitution. Removed keys disappear with
 the verified current document. Caller mutation cannot add authorization.
+
+QAS checkpoint `5147903814` found that the prior AC-4 profile accepted
+prefix-shaped fake material and lacked a positive verified X25519 selection.
+The remediation is implemented in `src/resolver.rs`, with direct decoder and
+profile tests in that module, verified-state integration tests in
+`tests/stage2.rs`, and the signed public fixture at
+`tests/fixtures/ac4-key-agreement/did.jsonl`.
+
+For every selected `publicKeyMultibase`, Robin now:
+
+1. decodes Multibase with `multibase` 0.9.3 and requires Base58BTC;
+2. decodes the leading unsigned varint with `unsigned-varint` 0.8.0 and
+   rejects malformed, incomplete, and non-canonical encodings;
+3. permits only Multicodec `0xed` (`ed25519-pub`) for `authentication` or
+   `0xec` (`x25519-pub`) for `keyAgreement`;
+4. requires exactly 32 raw bytes after the Multicodec prefix;
+5. imports Ed25519 bytes with `ed25519-dalek` 2.2.0 and imports X25519 bytes
+   with `x25519-dalek` 2.0.1, rejecting the all-zero X25519 value; and
+6. returns typed `InvalidKeyMaterial` or relationship-policy errors without
+   falling back to textual-prefix inference.
+
+The malformed-material matrix covers `z6MkTestOnlyMaterial`,
+`z6LSTestOnlyMaterial`, an unsupported Multibase, an invalid Base58BTC
+character, empty payload/missing Multicodec, incomplete and non-canonical
+varints, an unsupported Multicodec, prefix-shaped malformed bytes, and
+31-/33-byte Ed25519 and X25519 material. Relationship tests additionally cover
+Ed25519-for-key-agreement, X25519-for-authentication, conflicting/multiple key
+fields, malformed/wrong controllers, unsupported method type, duplicate and
+dangling IDs/references, and wrong-relationship-only membership.
+
+The positive authentication path resolves the pinned signed `basic-create`
+history, selects `#P5RDjVJG`, decodes Multicodec `0xed`, and observes 32 raw
+bytes. The positive key-agreement path resolves the new signed two-entry
+history, selects exact ID `#efGAgi89`, decodes Multicodec `0xec`, and observes
+32 raw bytes. Both selections remain unchanged when a caller mutates a
+detached DID Document copy.
+
+The new public fixture was generated with DIF `didwebvh-test-suite` commit
+`f792ce4568c8c3efb3b6a055a1c2ba963dc00c35` and independent `didwebvh-ts`
+commit `9b899225b304b27adef009083cd9ff3bc98b1f09`. After building that exact
+TypeScript revision, the exact generator command was
+`corepack pnpm@11.10.0 run generate -- ac4-key-agreement`; its generated
+source path was `vectors/ac4-key-agreement/ts/did.jsonl`. The local scenario
+was test-only; no private key, signing seed, or credential is retained in this
+repository. The expected public X25519 material is
+`z6LSkdrX4EvewpktHBjvNxRDogPdC5iVF8LT3LPKefGAgi89`.
+
+Focused and final observed results:
+
+- `cargo test --locked resolver::tests:: -- --nocapture` — PASS: 7 passed,
+  0 failed, 0 ignored.
+- `cargo test --locked --test stage2 selects_valid_verified_authentication_multikey_from_immutable_state -- --exact` — PASS: 1 passed, 14 filtered.
+- `cargo test --locked --test stage2 selects_valid_verified_x25519_key_agreement_multikey -- --exact` — PASS: 1 passed, 14 filtered.
+- `cargo test --locked --test stage2 caller_visible_document_mutation_cannot_affect_key_selection -- --exact` — PASS: 1 passed, 14 filtered.
+- `cargo test --locked --all-targets` — PASS: 55 passed (8 unit, 16
+  Stage 1, 15 Stage 2, 16 Stage 3), 0 failed, 0 ignored; example targets had
+  0 tests.
+- `cargo fmt --all -- --check` — PASS.
+- `cargo clippy --locked --all-targets --all-features -- -D warnings` — PASS.
+- `make test` — PASS: the same 55 tests, 0 failed, 0 ignored.
+- `make lint`, `make run`, and `make wasm-check` — PASS.
+- `cargo test --locked --test stage2` — PASS: 15 passed, 0 failed, 0
+  ignored.
+- `cargo test --locked resolver::tests::fake_prefix_material_is_rejected -- --exact` — PASS: 1 passed, 7 unit tests filtered; the other targets ran 0 tests and filtered 16/15/16.
+
+The final checks used Homebrew `rustc 1.96.0` and Cargo `1.96.0`; the WASM
+target used the pinned Rustup stable toolchain through `make wasm-check`.
+Validation itself used the locked local dependency graph and required no
+network access. Network access was required earlier to read/persist GitHub
+checkpoints and to fetch the exact pinned TypeScript generator repositories.
+The only new generated evidence file retained by this AC-4 remediation is
+`tests/fixtures/ac4-key-agreement/did.jsonl`; Cargo also updated the root
+package's direct-dependency list in `Cargo.lock` without changing resolved
+versions.
+
+Remaining AC-4 limitations: the allow-list is experimental; successful
+decoding and library import are not production cryptographic approval;
+algorithm, dependency, and cryptographic suitability remain for independent
+Security Review; final Design remains unapproved.
 
 ### Freshness, rollback, and deactivation
 
@@ -145,7 +226,7 @@ Developer checkpoint if final gate execution differs.
 | AC-1 | PASS | `src/lib.rs`, `src/resolver.rs`; boundary tests in all stages | `cargo test --locked --all-targets`: method-neutral contract, typed unsupported method/version, raw provenance, freshness/conflict state; no secret/document coupling | Only a `did:webvh` adapter exists; persistence/consumers are out of scope |
 | AC-2 | PASS | `tests/stage1.rs`; TypeScript `basic-create` plus `expected-did-document.json` at suite/TS pins above | Stage 1: SCID, inception, method ID, input DID, state DID `id`, and complete golden semantics; only service-endpoint trailing slash is normalized | No second browser implementation; service URL serialization difference remains |
 | AC-3 | PASS | `src/resolver.rs`, `tests/stage1.rs`; TypeScript update and pre-rotation histories | Stage 1: inserted/removed/skipped/duplicate/reordered entries; duplicate/non-monotonic version ID/number/time; future time; predecessor/content/proof/key/parameter/state mutations; deterministic 256-case campaign seed `0x524f422d32514153` | Structured mutation, not coverage-guided fuzzing; replay with `cargo test --locked --test stage1 deterministic_structured_mutation_campaign_rejects_256_cases -- --exact` |
-| AC-4 | PASS | private `ResolutionOutput`, `authorized_keys`; resolver unit tests and `tests/stage2.rs` | Unit and Stage 2: immutable-copy regression; exact relationship; controller/type/material allow-list; duplicate/dangling/ambiguous/wrong-relationship/update-only/assertion-only behavior | Structural policy evidence is not algorithm approval; no signed key-agreement vector |
+| AC-4 | PASS | private `ResolutionOutput`, decoded Multikey validator, `authorized_keys`; resolver unit tests, `tests/stage2.rs`, signed TypeScript `ac4-key-agreement` fixture | Unit and Stage 2: decoded Base58BTC/Multicodec/length/import matrix; verified Ed25519 authentication and X25519 key-agreement selection; immutable-copy regression; exact relationship; controller/type/material/duplicate/dangling/ambiguous/wrong-relationship behavior | Experimental allow-list and successful parsing are not production algorithm approval; dependency/cryptographic suitability remains for Security Review |
 | AC-5 | PASS | `tests/stage2.rs`; TypeScript `pre-rotation*` and `negative-pre-rotation-omit-updatekeys` | Stage 2: valid creation/consumption/next commitment; missing/mismatched/malformed/reused/omitted cases; correctly signed compromised-current-key bypass rejected | Controller recovery/storage lifecycle is outside resolver scope |
 | AC-6 | PASS | `validate_witness_policy`, prefix verifier, `tests/stage2.rs`; TypeScript witness vectors | Stage 2: signed 1-of-1 and 2-of-2, thresholds, insufficient/more proofs, duplicate identity/proof, zero/impossible, unauthorized/removed/unsupported, bad signature/type/version/replay/body-fragment/forgery | 1-of-N and 2-of-3 are structurally covered by the same distinct-set policy, not separate signed fixtures; upstream interpretation risk remains |
 | AC-7 | PASS | typed deactivation tip, `tests/stage2.rs`; TypeScript deactivation | Stage 2: authorized deactivation, no key/document return, post-deactivation append rejection, stale active restoration rejection | Historical query semantics are explicitly outside scope |

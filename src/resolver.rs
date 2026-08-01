@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 use didwebvh_rs::url::WebVHURL;
 use didwebvh_rs::{DIDWebVHError, DIDWebVHState, log_entry::LogEntryMethods};
+use ed25519_dalek::VerifyingKey;
+use multibase::Base;
 use serde::{
     Deserialize, Deserializer, Serialize,
     de::{self, MapAccess, SeqAccess, Visitor},
@@ -11,6 +13,11 @@ use std::collections::HashSet;
 use std::fmt::Write;
 use std::net::IpAddr;
 use thiserror::Error;
+use x25519_dalek::PublicKey as X25519PublicKey;
+
+const ED25519_PUB_MULTICODEC: u64 = 0xed;
+const X25519_PUB_MULTICODEC: u64 = 0xec;
+const CURVE25519_PUBLIC_KEY_BYTES: usize = 32;
 
 /// Maximum accepted `did.jsonl` size for the deterministic client verifier.
 pub const MAX_LOG_BYTES: usize = 200 * 1024;
@@ -262,6 +269,8 @@ pub enum ResolutionError {
     Conflict(String),
     #[error("required verification relationship is absent or invalid: {0}")]
     MissingRelationship(String),
+    #[error("invalid Multikey material: {0}")]
+    InvalidKeyMaterial(String),
     #[error("network retrieval unavailable or unsafe: {0}")]
     NetworkUnavailable(String),
 }
@@ -528,7 +537,7 @@ fn validate_selected_method(
     method: &Value,
     resolved_did: &str,
     relationship: &str,
-) -> Result<(), ResolutionError> {
+) -> Result<DecodedMultikey, ResolutionError> {
     let object = method.as_object().ok_or_else(|| {
         ResolutionError::MalformedInput("verification method is not an object".into())
     })?;
@@ -542,11 +551,37 @@ fn validate_selected_method(
             "unsupported verification method type in experimental profile".into(),
         ));
     }
+    let method_id = object.get("id").and_then(Value::as_str).ok_or_else(|| {
+        ResolutionError::MalformedInput("verification method is missing a string id".into())
+    })?;
+    let fragment = method_id
+        .strip_prefix(resolved_did)
+        .and_then(|suffix| suffix.strip_prefix('#'));
+    if fragment.is_none_or(|fragment| {
+        fragment.is_empty()
+            || fragment.contains(['#', '?', '/'])
+            || fragment.chars().any(char::is_whitespace)
+    }) {
+        return Err(ResolutionError::MissingRelationship(
+            "verification method id is not an unambiguous fragment of the resolved DID".into(),
+        ));
+    }
+    if object.contains_key("revoked") {
+        return Err(ResolutionError::MissingRelationship(
+            "revoked verification methods are unsupported by the experimental profile".into(),
+        ));
+    }
     let material_fields = [
         "publicKeyMultibase",
         "publicKeyJwk",
         "publicKeyBase58",
         "publicKeyHex",
+        "publicKeyBase64",
+        "publicKeyPem",
+        "publicKeyDer",
+        "privateKeyJwk",
+        "privateKeyMultibase",
+        "secretKeyMultibase",
         "blockchainAccountId",
     ];
     let present: Vec<&str> = material_fields
@@ -565,19 +600,92 @@ fn validate_selected_method(
         .and_then(Value::as_str)
         .filter(|value| !value.is_empty())
         .ok_or_else(|| {
-            ResolutionError::MalformedInput("publicKeyMultibase is empty or malformed".into())
+            ResolutionError::InvalidKeyMaterial("publicKeyMultibase is empty or malformed".into())
         })?;
-    let allowed = match relationship {
-        "authentication" => key.starts_with("z6Mk"),
-        "keyAgreement" => key.starts_with("z6LS"),
-        _ => false,
+    let decoded = decode_multikey(key)?;
+    let expected_codec = match relationship {
+        "authentication" => ED25519_PUB_MULTICODEC,
+        "keyAgreement" => X25519_PUB_MULTICODEC,
+        _ => {
+            return Err(ResolutionError::MissingRelationship(format!(
+                "unsupported verification relationship: {relationship}"
+            )));
+        }
     };
-    if !allowed {
+    if decoded.multicodec != expected_codec {
         return Err(ResolutionError::MissingRelationship(format!(
-            "key material is unsupported for {relationship} by the test-only profile"
+            "decoded Multicodec is unsupported for {relationship} by the test-only profile"
         )));
     }
-    Ok(())
+    Ok(decoded)
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DecodedMultikey {
+    multicodec: u64,
+    public_key: [u8; CURVE25519_PUBLIC_KEY_BYTES],
+}
+
+fn decode_multikey(value: &str) -> Result<DecodedMultikey, ResolutionError> {
+    let (base, decoded) = multibase::decode(value).map_err(|error| {
+        ResolutionError::InvalidKeyMaterial(format!("Multibase decoding failed: {error}"))
+    })?;
+    if base != Base::Base58Btc {
+        return Err(ResolutionError::InvalidKeyMaterial(
+            "experimental profile requires Base58BTC Multibase encoding".into(),
+        ));
+    }
+    if decoded.is_empty() {
+        return Err(ResolutionError::InvalidKeyMaterial(
+            "decoded Multikey payload is empty and has no Multicodec".into(),
+        ));
+    }
+    let (multicodec, public_key) = unsigned_varint::decode::u64(&decoded).map_err(|error| {
+        ResolutionError::InvalidKeyMaterial(format!(
+            "Multicodec unsigned-varint is missing or malformed: {error}"
+        ))
+    })?;
+    let prefix_length = decoded.len() - public_key.len();
+    let mut canonical_buffer = unsigned_varint::encode::u64_buffer();
+    let canonical = unsigned_varint::encode::u64(multicodec, &mut canonical_buffer);
+    if decoded.get(..prefix_length) != Some(canonical) {
+        return Err(ResolutionError::InvalidKeyMaterial(
+            "Multicodec unsigned-varint is non-canonical".into(),
+        ));
+    }
+    if !matches!(multicodec, ED25519_PUB_MULTICODEC | X25519_PUB_MULTICODEC) {
+        return Err(ResolutionError::InvalidKeyMaterial(format!(
+            "unsupported public-key Multicodec 0x{multicodec:x}"
+        )));
+    }
+    let public_key: [u8; CURVE25519_PUBLIC_KEY_BYTES] = public_key.try_into().map_err(|_| {
+        ResolutionError::InvalidKeyMaterial(format!(
+            "Multicodec 0x{multicodec:x} requires exactly {CURVE25519_PUBLIC_KEY_BYTES} raw public-key bytes"
+        ))
+    })?;
+    match multicodec {
+        ED25519_PUB_MULTICODEC => {
+            VerifyingKey::from_bytes(&public_key).map_err(|error| {
+                ResolutionError::InvalidKeyMaterial(format!(
+                    "Ed25519 public-key import failed: {error}"
+                ))
+            })?;
+        }
+        X25519_PUB_MULTICODEC => {
+            let imported = X25519PublicKey::from(public_key);
+            if imported.as_bytes().iter().all(|byte| *byte == 0) {
+                return Err(ResolutionError::InvalidKeyMaterial(
+                    "X25519 all-zero public key is not permitted by the experimental profile"
+                        .into(),
+                ));
+            }
+        }
+        _ => unreachable!("unsupported Multicodecs returned above"),
+    }
+    Ok(DecodedMultikey {
+        multicodec,
+        public_key,
+    })
 }
 
 impl ResolutionOutput {
@@ -1532,6 +1640,180 @@ mod tests {
         })
     }
 
+    fn encoded_multikey(multicodec: u64, public_key: &[u8]) -> String {
+        let mut buffer = unsigned_varint::encode::u64_buffer();
+        let mut payload = unsigned_varint::encode::u64(multicodec, &mut buffer).to_vec();
+        payload.extend_from_slice(public_key);
+        multibase::encode(Base::Base58Btc, payload)
+    }
+
+    fn valid_ed25519_multikey() -> &'static str {
+        "z6MkjchhfUsD6mmvni8mCdXHw216Xrm9bQe2mBH1P5RDjVJG"
+    }
+
+    fn x25519_public_key() -> [u8; CURVE25519_PUBLIC_KEY_BYTES] {
+        [
+            0x85, 0x20, 0xf0, 0x09, 0x89, 0x30, 0xa7, 0x54, 0x74, 0x8b, 0x7d, 0xdc, 0xb4, 0x3e,
+            0xf7, 0x5a, 0x0d, 0xbf, 0x3a, 0x0d, 0x26, 0x38, 0x1a, 0xf4, 0xeb, 0xa4, 0xa9, 0x8e,
+            0xaa, 0x9b, 0x4e, 0x6a,
+        ]
+    }
+
+    #[test]
+    fn decoded_multikey_profile_accepts_valid_ed25519_and_x25519() {
+        let ed25519 = decode_multikey(valid_ed25519_multikey()).unwrap();
+        assert_eq!(ed25519.multicodec, ED25519_PUB_MULTICODEC);
+        assert_eq!(ed25519.public_key.len(), CURVE25519_PUBLIC_KEY_BYTES);
+
+        let x25519_value = encoded_multikey(X25519_PUB_MULTICODEC, &x25519_public_key());
+        let x25519 = decode_multikey(&x25519_value).unwrap();
+        assert_eq!(x25519.multicodec, X25519_PUB_MULTICODEC);
+        assert_eq!(x25519.public_key, x25519_public_key());
+    }
+
+    #[test]
+    fn decoded_multikey_profile_rejects_prefixes_malformed_data_and_unsupported_codecs() {
+        let incomplete = multibase::encode(Base::Base58Btc, [0x80]);
+        let unsupported = encoded_multikey(0x1200, &[7; CURVE25519_PUBLIC_KEY_BYTES]);
+        let non_base58 = {
+            let (_, payload) = multibase::decode(valid_ed25519_multikey()).unwrap();
+            multibase::encode(Base::Base64, payload)
+        };
+        let noncanonical = {
+            let mut payload = vec![0xed, 0x81, 0x00];
+            payload.extend_from_slice(
+                &decode_multikey(valid_ed25519_multikey())
+                    .unwrap()
+                    .public_key,
+            );
+            multibase::encode(Base::Base58Btc, payload)
+        };
+        for value in [
+            "z6MkTestOnlyMaterial".to_owned(),
+            "z6LSTestOnlyMaterial".to_owned(),
+            "z0".to_owned(),
+            "z".to_owned(),
+            incomplete,
+            unsupported,
+            non_base58,
+            noncanonical,
+        ] {
+            assert!(
+                matches!(
+                    decode_multikey(&value),
+                    Err(ResolutionError::InvalidKeyMaterial(_))
+                ),
+                "accepted invalid material {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn fake_prefix_material_is_rejected() {
+        for value in ["z6MkTestOnlyMaterial", "z6LSTestOnlyMaterial"] {
+            assert!(matches!(
+                decode_multikey(value),
+                Err(ResolutionError::InvalidKeyMaterial(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn decoded_multikey_profile_enforces_raw_key_length_after_multicodec() {
+        for (codec, length) in [
+            (ED25519_PUB_MULTICODEC, 31),
+            (ED25519_PUB_MULTICODEC, 33),
+            (X25519_PUB_MULTICODEC, 31),
+            (X25519_PUB_MULTICODEC, 33),
+        ] {
+            let value = encoded_multikey(codec, &vec![7; length]);
+            assert!(matches!(
+                decode_multikey(&value),
+                Err(ResolutionError::InvalidKeyMaterial(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn ac4_malformed_material_matrix_returns_typed_errors() {
+        let did = "did:webvh:QmSynthetic:example.com";
+        let id = format!("{did}#key-1");
+        let method = |material: String| {
+            json!({
+                "id": id,
+                "controller": did,
+                "type": "Multikey",
+                "publicKeyMultibase": material
+            })
+        };
+        let valid_ed = valid_ed25519_multikey().to_owned();
+        let valid_x = encoded_multikey(X25519_PUB_MULTICODEC, &x25519_public_key());
+        let non_base58 = {
+            let (_, payload) = multibase::decode(&valid_ed).unwrap();
+            multibase::encode(Base::Base64, payload)
+        };
+        let incomplete = multibase::encode(Base::Base58Btc, [0x80]);
+        let unsupported = encoded_multikey(0x1200, &[7; CURVE25519_PUBLIC_KEY_BYTES]);
+
+        for (label, material) in [
+            ("fake Ed25519 prefix", "z6MkTestOnlyMaterial".to_owned()),
+            ("fake X25519 prefix", "z6LSTestOnlyMaterial".to_owned()),
+            ("unsupported Multibase", non_base58),
+            ("invalid Base58BTC character", "z0".to_owned()),
+            ("empty encoded payload", "z".to_owned()),
+            ("incomplete Multicodec", incomplete),
+            ("unsupported Multicodec", unsupported),
+            (
+                "Ed25519 one byte short",
+                encoded_multikey(ED25519_PUB_MULTICODEC, &[7; 31]),
+            ),
+            (
+                "Ed25519 one byte long",
+                encoded_multikey(ED25519_PUB_MULTICODEC, &[7; 33]),
+            ),
+            (
+                "X25519 one byte short",
+                encoded_multikey(X25519_PUB_MULTICODEC, &[7; 31]),
+            ),
+            (
+                "X25519 one byte long",
+                encoded_multikey(X25519_PUB_MULTICODEC, &[7; 33]),
+            ),
+        ] {
+            assert!(
+                matches!(
+                    validate_selected_method(&method(material), did, "authentication"),
+                    Err(ResolutionError::InvalidKeyMaterial(_))
+                ),
+                "{label} did not return InvalidKeyMaterial"
+            );
+        }
+
+        assert!(matches!(
+            validate_selected_method(&method(valid_x), did, "authentication"),
+            Err(ResolutionError::MissingRelationship(_))
+        ));
+        assert!(matches!(
+            validate_selected_method(&method(valid_ed), did, "keyAgreement"),
+            Err(ResolutionError::MissingRelationship(_))
+        ));
+
+        for invalid in [
+            json!({ "id": id, "controller": 7, "type": "Multikey", "publicKeyMultibase": valid_ed25519_multikey() }),
+            json!({ "id": id, "controller": "did:webvh:attacker:example.com", "type": "Multikey", "publicKeyMultibase": valid_ed25519_multikey() }),
+            json!({ "id": id, "controller": did, "type": "JsonWebKey2020", "publicKeyMultibase": valid_ed25519_multikey() }),
+            json!({ "id": id, "controller": did, "type": "Multikey", "publicKeyMultibase": valid_ed25519_multikey(), "publicKeyJwk": {} }),
+            json!({ "id": id, "controller": did, "type": "Multikey", "publicKeyMultibase": valid_ed25519_multikey(), "publicKeyBase58": "not-used" }),
+            json!({ "id": id, "controller": did, "type": "Multikey", "publicKeyMultibase": valid_ed25519_multikey(), "secretKeyMultibase": "must-never-be-accepted" }),
+            json!({ "id": id, "controller": did, "type": "Multikey", "publicKeyMultibase": valid_ed25519_multikey(), "revoked": "2000-01-01T00:00:00Z" }),
+        ] {
+            assert!(matches!(
+                validate_selected_method(&invalid, did, "authentication"),
+                Err(ResolutionError::MissingRelationship(_))
+            ));
+        }
+    }
+
     #[test]
     fn experimental_key_profile_rejects_wrong_controller_type_and_material() {
         let id = "did:webvh:QmSynthetic:example.com#key-1";
@@ -1539,7 +1821,7 @@ mod tests {
             "id": id,
             "controller": "did:webvh:QmSynthetic:example.com",
             "type": "Multikey",
-            "publicKeyMultibase": "z6MkTestOnlyMaterial"
+            "publicKeyMultibase": valid_ed25519_multikey()
         });
         assert_eq!(
             synthetic_output(document(&valid, id))
@@ -1551,6 +1833,7 @@ mod tests {
         for invalid in [
             json!({ "id": id, "controller": "did:webvh:attacker:example.com", "type": "Multikey", "publicKeyMultibase": "z6MkTestOnlyMaterial" }),
             json!({ "id": id, "controller": "did:webvh:QmSynthetic:example.com", "type": "JsonWebKey2020", "publicKeyMultibase": "z6MkTestOnlyMaterial" }),
+            json!({ "id": "did:webvh:other:example.com#key-1", "controller": "did:webvh:QmSynthetic:example.com", "type": "Multikey", "publicKeyMultibase": valid_ed25519_multikey() }),
             json!({ "id": id, "controller": "did:webvh:QmSynthetic:example.com", "type": "Multikey", "publicKeyJwk": {} }),
             json!({ "id": id, "controller": "did:webvh:QmSynthetic:example.com", "type": "Multikey", "publicKeyMultibase": "", "publicKeyJwk": {} }),
         ] {
@@ -1570,7 +1853,7 @@ mod tests {
             "id": id,
             "controller": did,
             "type": "Multikey",
-            "publicKeyMultibase": "z6MkTestOnlyMaterial"
+            "publicKeyMultibase": valid_ed25519_multikey()
         });
         let duplicate_id = json!({
             "id": did,

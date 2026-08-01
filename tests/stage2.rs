@@ -5,6 +5,9 @@ const DID_BASIC: &str = "did:webvh:QmUy89VrfryQ254CeHZzQfmcKqByPoKNGqYykP3SeXueg
 const DID_PREROTATION: &str =
     "did:webvh:QmVo7guGd8Fq4vGmCTcAuZWBFw8ipW8HNoJ8g7XFKmP4bS:example.com";
 const DID_WITNESS: &str = "did:webvh:QmZTne7vT227kcwn27tt1rSPvPKy1iQs6SgJA8dhwJBnbS:example.com";
+const DID_AC4: &str = "did:webvh:QmV2V5CSzH5w9UF4rHHAdktXL93ounugmgV2LXVCx9s2i9:example.com";
+const ED25519_PUB_MULTICODEC: u64 = 0xed;
+const X25519_PUB_MULTICODEC: u64 = 0xec;
 
 fn fixture() -> ResolutionInput {
     serde_json::from_str(include_str!("fixtures/basic-create/input.json")).unwrap()
@@ -19,13 +22,31 @@ fn with_log(did: &str, path: &str, raw_log: &str) -> ResolutionInput {
     input
 }
 
+fn assert_decoded_multikey(value: &str, expected_multicodec: u64) {
+    let (base, payload) = multibase::decode(value).unwrap();
+    assert_eq!(base, multibase::Base::Base58Btc);
+    let (multicodec, raw_public_key) = unsigned_varint::decode::u64(&payload).unwrap();
+    assert_eq!(multicodec, expected_multicodec);
+    assert_eq!(raw_public_key.len(), 32);
+}
+
 #[tokio::test]
-async fn selects_only_keys_cryptographically_bound_to_verified_state() {
+async fn selects_valid_verified_authentication_multikey_from_immutable_state() {
     let output = WebvhResolver.resolve(fixture()).await.unwrap();
     let authentication = output.authorized_keys("authentication").unwrap();
     assert_eq!(authentication.len(), 1);
     assert!(authentication[0].id.ends_with("#P5RDjVJG"));
+    assert_decoded_multikey(
+        authentication[0].verification_method["publicKeyMultibase"]
+            .as_str()
+            .unwrap(),
+        ED25519_PUB_MULTICODEC,
+    );
+}
 
+#[tokio::test]
+async fn caller_visible_document_mutation_cannot_affect_key_selection() {
+    let output = WebvhResolver.resolve(fixture()).await.unwrap();
     let agreement_id = format!("{DID_BASIC}#agreement-1");
     let mut presentation = output.did_document_copy();
     presentation
@@ -48,6 +69,45 @@ async fn selects_only_keys_cryptographically_bound_to_verified_state() {
         output.authorized_keys("assertionMethod"),
         Err(ResolutionError::MissingRelationship(_))
     ));
+}
+
+#[tokio::test]
+async fn selects_valid_verified_x25519_key_agreement_multikey() {
+    let input = with_log(
+        DID_AC4,
+        "didwebvh-test-suite@f792ce4568c8c3efb3b6a055a1c2ba963dc00c35/vectors/ac4-key-agreement/ts",
+        include_str!("fixtures/ac4-key-agreement/did.jsonl"),
+    );
+    let output = WebvhResolver.resolve(input).await.unwrap();
+    assert_eq!(output.metadata.version_number, 2);
+
+    let authentication = output.authorized_keys("authentication").unwrap();
+    assert_eq!(authentication.len(), 1);
+    assert_eq!(authentication[0].id, format!("{DID_AC4}#P5RDjVJG"));
+    assert_decoded_multikey(
+        authentication[0].verification_method["publicKeyMultibase"]
+            .as_str()
+            .unwrap(),
+        ED25519_PUB_MULTICODEC,
+    );
+
+    let agreement = output.authorized_keys("keyAgreement").unwrap();
+    assert_eq!(agreement.len(), 1);
+    assert_eq!(agreement[0].id, format!("{DID_AC4}#efGAgi89"));
+    assert_eq!(
+        agreement[0].verification_method["publicKeyMultibase"],
+        "z6LSkdrX4EvewpktHBjvNxRDogPdC5iVF8LT3LPKefGAgi89"
+    );
+    assert_decoded_multikey(
+        agreement[0].verification_method["publicKeyMultibase"]
+            .as_str()
+            .unwrap(),
+        X25519_PUB_MULTICODEC,
+    );
+
+    let mut detached = output.did_document_copy();
+    detached["keyAgreement"] = serde_json::json!([]);
+    assert_eq!(output.authorized_keys("keyAgreement").unwrap(), agreement);
 }
 
 #[tokio::test]
