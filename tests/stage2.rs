@@ -111,7 +111,7 @@ async fn selects_valid_verified_x25519_key_agreement_multikey() {
 }
 
 #[tokio::test]
-async fn rejects_dangling_or_malformed_relationship_entries() {
+async fn detached_document_dangling_reference_cannot_change_verified_selection() {
     let output = WebvhResolver.resolve(fixture()).await.unwrap();
     let mut detached = output.did_document_copy();
     detached["authentication"] = serde_json::json!(["#missing", 7]);

@@ -87,6 +87,10 @@ the verified current document. Caller mutation cannot add authorization.
 
 QAS checkpoint `5147903814` found that the prior AC-4 profile accepted
 prefix-shaped fake material and lacked a positive verified X25519 selection.
+Focused QAS checkpoint `5149538043` accepted the remediated decoder, positive
+verified paths, relationship policy, and immutable-state behavior, but found
+that all-zero X25519 and authoritative dangling-reference branches lacked
+separate executable evidence.
 The remediation is implemented in `src/resolver.rs`, with direct decoder and
 profile tests in that module, verified-state integration tests in
 `tests/stage2.rs`, and the signed public fixture at
@@ -109,10 +113,27 @@ The malformed-material matrix covers `z6MkTestOnlyMaterial`,
 `z6LSTestOnlyMaterial`, an unsupported Multibase, an invalid Base58BTC
 character, empty payload/missing Multicodec, incomplete and non-canonical
 varints, an unsupported Multicodec, prefix-shaped malformed bytes, and
-31-/33-byte Ed25519 and X25519 material. Relationship tests additionally cover
-Ed25519-for-key-agreement, X25519-for-authentication, conflicting/multiple key
-fields, malformed/wrong controllers, unsupported method type, duplicate and
-dangling IDs/references, and wrong-relationship-only membership.
+31-/33-byte Ed25519 and X25519 material. The focused
+`all_zero_x25519_multikey_is_rejected` test constructs
+`unsigned-varint(0xec) || [0u8; 32]`, Base58BTC Multibase-encodes it, proves
+that decoding yields codec `0xec` and exactly 32 zero bytes, and then observes
+the precise typed `InvalidKeyMaterial` all-zero rejection. Relationship tests
+additionally cover Ed25519-for-key-agreement, X25519-for-authentication,
+conflicting/multiple key fields, malformed/wrong controllers, unsupported
+method type, duplicate and dangling IDs/references, and
+wrong-relationship-only membership.
+
+The module-private
+`authoritative_dangling_relationship_reference_is_rejected` unit test uses the
+existing `#[cfg(test)]` private-state constructor to place a nonexistent
+authentication reference directly in `ResolutionOutput`'s private authoritative
+DID Document, then invokes the production `authorized_keys` selector and
+observes the exact typed `MissingRelationship` error. This creates no public
+forged-state constructor and cannot bypass history verification in production.
+Separately,
+`detached_document_dangling_reference_cannot_change_verified_selection` mutates
+only a caller-visible copy and proves it cannot affect the authoritative
+selection result. These are distinct tests for distinct trust-boundary paths.
 
 The positive authentication path resolves the pinned signed `basic-create`
 history, selects `#P5RDjVJG`, decodes Multicodec `0xed`, and observes 32 raw
@@ -133,12 +154,14 @@ repository. The expected public X25519 material is
 
 Focused and final observed results:
 
-- `cargo test --locked resolver::tests:: -- --nocapture` — PASS: 7 passed,
+- `cargo test --locked resolver::tests:: -- --nocapture` — PASS: 10 passed,
   0 failed, 0 ignored.
+- `cargo test --locked resolver::tests::all_zero_x25519_multikey_is_rejected -- --exact` — PASS: 1 passed, 9 unit tests filtered; the other targets ran 0 tests.
+- `cargo test --locked resolver::tests::authoritative_dangling_relationship_reference_is_rejected -- --exact` — PASS: 1 passed, 9 unit tests filtered; the other targets ran 0 tests.
 - `cargo test --locked --test stage2 selects_valid_verified_authentication_multikey_from_immutable_state -- --exact` — PASS: 1 passed, 14 filtered.
 - `cargo test --locked --test stage2 selects_valid_verified_x25519_key_agreement_multikey -- --exact` — PASS: 1 passed, 14 filtered.
 - `cargo test --locked --test stage2 caller_visible_document_mutation_cannot_affect_key_selection -- --exact` — PASS: 1 passed, 14 filtered.
-- `cargo test --locked --all-targets` — PASS: 55 passed (8 unit, 16
+- `cargo test --locked --all-targets` — PASS: 57 passed (10 unit, 16
   Stage 1, 15 Stage 2, 16 Stage 3), 0 failed, 0 ignored; example targets had
   0 tests.
 - `cargo fmt --all -- --check` — PASS.

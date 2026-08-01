@@ -1719,6 +1719,23 @@ mod tests {
     }
 
     #[test]
+    fn all_zero_x25519_multikey_is_rejected() {
+        let value = encoded_multikey(X25519_PUB_MULTICODEC, &[0; CURVE25519_PUBLIC_KEY_BYTES]);
+        let (base, payload) = multibase::decode(&value).unwrap();
+        assert_eq!(base, Base::Base58Btc);
+        let (multicodec, public_key) = unsigned_varint::decode::u64(&payload).unwrap();
+        assert_eq!(multicodec, X25519_PUB_MULTICODEC);
+        assert_eq!(public_key.len(), CURVE25519_PUBLIC_KEY_BYTES);
+        assert!(public_key.iter().all(|byte| *byte == 0));
+
+        assert!(matches!(
+            decode_multikey(&value),
+            Err(ResolutionError::InvalidKeyMaterial(message))
+                if message == "X25519 all-zero public key is not permitted by the experimental profile"
+        ));
+    }
+
+    #[test]
     fn decoded_multikey_profile_enforces_raw_key_length_after_multicodec() {
         for (codec, length) in [
             (ED25519_PUB_MULTICODEC, 31),
@@ -1885,6 +1902,42 @@ mod tests {
                 .authorized_keys("keyAgreement")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn authoritative_dangling_relationship_reference_is_rejected() {
+        let did = "did:webvh:QmSynthetic:example.com";
+        let method_id = format!("{did}#key-1");
+        let dangling_id = format!("{did}#missing-key");
+        let authoritative_document = json!({
+            "id": did,
+            "verificationMethod": [{
+                "id": method_id,
+                "controller": did,
+                "type": "Multikey",
+                "publicKeyMultibase": valid_ed25519_multikey()
+            }],
+            "authentication": [dangling_id]
+        });
+
+        // This module-private test constructor installs the document directly
+        // as private authoritative state; no public forged-state constructor or
+        // detached presentation-copy mutation is involved.
+        let output = synthetic_output(authoritative_document);
+        assert!(
+            output.did_document()["verificationMethod"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|method| method["id"] != dangling_id)
+        );
+        assert!(matches!(
+            output.authorized_keys("authentication"),
+            Err(ResolutionError::MissingRelationship(message))
+                if message == format!(
+                    "authentication references unknown verification method {dangling_id}"
+                )
+        ));
     }
 
     fn witness_identity(index: usize) -> String {
