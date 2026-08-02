@@ -1,12 +1,16 @@
 use async_trait::async_trait;
+use didwebvh_rs::url::WebVHURL;
 use robin_did_resolver_spike::{
     DidResolver, EvidenceFetcher, EvidenceSource, FetchError, FetchedEvidence, Freshness,
-    MAX_DID_BYTES, ResolutionError, ResolutionInput, SourceKind, TransportPolicy, WebvhResolver,
+    MAX_DID_BYTES, MAX_SOURCE_URI_BYTES, ResolutionError, ResolutionInput, SourceKind,
+    TransportPolicy, WebvhResolver,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
 const DID: &str = "did:webvh:QmUy89VrfryQ254CeHZzQfmcKqByPoKNGqYykP3SeXuegQ:example.com";
+const DID_QUERY_PREFIX: &str =
+    "did:webvh:QmUy89VrfryQ254CeHZzQfmcKqByPoKNGqYykP3SeXuegQ:example.com?x=";
 
 fn fixture() -> ResolutionInput {
     serde_json::from_str(include_str!("fixtures/basic-create/input.json")).unwrap()
@@ -16,6 +20,17 @@ fn oversized_ascii_did() -> String {
     let prefix = "did:webvh:";
     let did = format!("{prefix}{}", "a".repeat(MAX_DID_BYTES + 1 - prefix.len()));
     assert_eq!(did.len(), MAX_DID_BYTES + 1);
+    did
+}
+
+fn did_at_exact_limit_with_query_filler(filler: char) -> String {
+    assert!(filler.is_ascii());
+    let filler_len = MAX_DID_BYTES - DID_QUERY_PREFIX.len();
+    let did = format!(
+        "{DID_QUERY_PREFIX}{}",
+        std::iter::repeat_n(filler, filler_len).collect::<String>()
+    );
+    assert_eq!(did.len(), MAX_DID_BYTES);
     did
 }
 
@@ -80,6 +95,64 @@ impl EvidenceFetcher for CountingFetcher {
 #[test]
 fn oversized_did_is_rejected_before_url_parsing() {
     assert_did_byte_limit(WebvhResolver::evidence_urls(&oversized_ascii_did()).unwrap_err());
+}
+
+#[test]
+fn did_at_exact_byte_limit_is_not_rejected_by_envelope() {
+    let did = did_at_exact_limit_with_query_filler('a');
+    let filler = "a".repeat(MAX_DID_BYTES - DID_QUERY_PREFIX.len());
+
+    let (log, witness) = WebvhResolver::evidence_urls(&did).unwrap();
+
+    assert_eq!(
+        log,
+        format!("https://example.com/.well-known/did.jsonl?x={filler}")
+    );
+    assert_eq!(
+        witness,
+        format!("https://example.com/.well-known/did-witness.json?x={filler}")
+    );
+    assert_eq!(log.len(), 2_021);
+    assert_eq!(witness.len(), 2_028);
+    assert!(log.len() <= MAX_SOURCE_URI_BYTES);
+    assert!(witness.len() <= MAX_SOURCE_URI_BYTES);
+}
+
+#[test]
+fn evidence_urls_rejects_reachable_public_transformed_url_overflow() {
+    let did = did_at_exact_limit_with_query_filler('\'');
+    let filler_len = MAX_DID_BYTES - DID_QUERY_PREFIX.len();
+
+    let parsed = WebVHURL::parse_did_url(&did).expect("exact-limit DID URL should parse");
+    assert_eq!(parsed.query, Some(format!("x={}", "'".repeat(filler_len))));
+
+    let log = parsed
+        .get_http_url(Some("did.jsonl"))
+        .expect("accepted query should serialize to a log URL")
+        .to_string();
+    let witness = parsed
+        .get_http_url(Some("did-witness.json"))
+        .expect("accepted query should serialize to a witness URL")
+        .to_string();
+    let encoded_filler = "%27".repeat(filler_len);
+    assert_eq!(
+        log,
+        format!("https://example.com/.well-known/did.jsonl?x={encoded_filler}")
+    );
+    assert_eq!(
+        witness,
+        format!("https://example.com/.well-known/did-witness.json?x={encoded_filler}")
+    );
+    assert_eq!(log.len(), 5_975);
+    assert_eq!(witness.len(), 5_982);
+    assert!(log.len() > MAX_SOURCE_URI_BYTES);
+    assert!(witness.len() > MAX_SOURCE_URI_BYTES);
+
+    assert!(matches!(
+        WebvhResolver::evidence_urls(&did),
+        Err(ResolutionError::ResourceLimit(message))
+            if message == "transformed evidence URL exceeds the configured byte limit"
+    ));
 }
 
 #[tokio::test]

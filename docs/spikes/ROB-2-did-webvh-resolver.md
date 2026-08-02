@@ -1,9 +1,9 @@
 # ROB-2 — Rust/WASM `did:webvh` adversarial resolver spike
 
-Status: experimental Construction evidence after Developer AC-9 remediation. This is not
-production implementation, final Design approval, or approval of
-`did:webvh`, any cryptographic suite, dependency, browser architecture, or
-transport policy.
+Status: experimental Construction evidence after focused Developer AC-9
+boundary-evidence remediation. This is not production implementation, final
+Design approval, or approval of `did:webvh`, any cryptographic suite,
+dependency, browser architecture, or transport policy.
 
 ## Scope and boundary
 
@@ -252,6 +252,12 @@ sources and invoke `EvidenceFetcher::fetch` before the inner `resolve` call
 rejected the DID. This meant a hostile oversized identifier could perform
 parser/normalization work or observable host I/O.
 
+Focused QAS checkpoint `5160447019` independently accepted that ordering fix
+and the final output guard, but found two missing boundary regressions: public
+query serialization can expand an envelope-accepted DID beyond the output
+limit, and the exactly-equal input boundary was not protected. It also found
+that Stage 3 was incorrectly credited with malformed key-encoding evidence.
+
 The Developer remediation applies the shared DID envelope validator before
 work at all applicable public entry points:
 
@@ -285,13 +291,24 @@ Focused AC-9 tests and observed results:
   character count is within `MAX_DID_BYTES`, the UTF-8 byte count exceeds it,
   and rejection occurs before parsing or fetch. This is resource-accounting
   evidence and does not imply Unicode is syntactically valid for `did:webvh`.
+- `did_at_exact_byte_limit_is_not_rejected_by_envelope` — PASS: a syntactically
+  valid DID containing an unescaped ASCII query value is exactly 2,048 input
+  bytes and successfully produces complete HTTPS log and witness URLs of 2,021
+  and 2,028 bytes. This independently protects the accepted side of the strict
+  input-envelope boundary.
+- `evidence_urls_rejects_reachable_public_transformed_url_overflow` — PASS:
+  a syntactically accepted DID is exactly 2,048 input bytes, and its query
+  contains 1,977 U+0027 apostrophe characters. The pinned HTTPS URL serializer
+  percent-encodes each as `%27`, expanding the complete log and witness URLs to
+  5,975 and 5,982 bytes. The public `WebvhResolver::evidence_urls` entry point
+  returns the stable typed `ResourceLimit` diagnostic `transformed evidence URL
+  exceeds the configured byte limit`; it returns no partial pair and performs
+  no truncation.
 - `resolver::tests::evidence_urls_reject_transformed_urls_over_source_uri_limit`
-  — PASS: the final bound helper returns the stable typed resource-limit error
-  for an over-limit complete URL. A public-path over-limit transformation is
-  unreachable under the current equal 2,048-byte DID/source constants because
-  the method transformation removes the DID method and SCID representation;
-  the final check remains mandatory against future constant or encoding
-  changes.
+  — PASS: the private final-bound helper independently returns the same stable
+  typed resource-limit error for an over-limit complete URL. This is lower-level
+  evidence only; the public regression above proves the reachable serialized
+  path identified by focused QAS checkpoint `5160447019`.
 - `safe_transport_can_supply_untrusted_bytes_for_local_verification` — PASS:
   a normal valid DID reaches the deterministic fetcher exactly once and
   resolves.
@@ -314,12 +331,36 @@ cargo test --locked multibyte_did_is_rejected_by_utf8_byte_length_before_fetch -
 - `cargo test --locked --all-targets` — PASS: 63 total (11 unit, 16 Stage 1,
   15 Stage 2, 21 Stage 3), 0 failed, 0 ignored; example targets had 0 tests.
 
+Post-checkpoint `5160447019` Developer remediation results are recorded
+separately from that immutable implementation result:
+
+- `cargo test --locked evidence_urls_rejects_reachable_public_transformed_url_overflow -- --exact`
+  — PASS: 1 passed, 0 failed, 0 ignored, 22 Stage 3 tests filtered;
+- `cargo test --locked did_at_exact_byte_limit_is_not_rejected_by_envelope -- --exact`
+  — PASS: 1 passed, 0 failed, 0 ignored, 22 Stage 3 tests filtered;
+- `cargo test --locked --test stage3` — PASS: 23 passed, 0 failed, 0 ignored;
+- the exact deterministic URL-transformation campaign — PASS: 1 passed, 0
+  failed, 0 ignored, 22 filtered; the fixed 256-case campaign remains unchanged;
+- the exact deterministic signature/proof mutation campaign — PASS: 1 passed,
+  0 failed, 0 ignored, 22 filtered; all 64 mutations execute;
+- `cargo test --locked --all-targets` — PASS: 65 total (11 unit, 16 Stage 1,
+  15 Stage 2, 23 Stage 3), 0 failed, 0 ignored; example targets had 0 tests.
+
 The preserved Stage 3 corpus still covers duplicate JSON fields, deep and
 oversized JSON/evidence, malformed escapes, 64 deterministic signature
 mutations, Unicode/percent ambiguity, traversal and encoded separators, IP
-literals and disallowed IPv4/IPv6 classes, malformed proof/key encodings, the
-seeded 256-case URL-transformation campaign, and no-panic behavior. These are
-deterministic adversarial and mutation tests, not coverage-guided fuzzing.
+literals and disallowed IPv4/IPv6 classes, malformed proof/signature data, the
+seeded 256-case URL-transformation campaign, and no-panic behavior. Malformed
+Multibase, Multicodec, and raw key-length evidence instead belongs to resolver
+unit test
+`decoded_multikey_profile_rejects_prefixes_malformed_data_and_unsupported_codecs`
+and its neighboring decoded-key profile regressions. These are deterministic
+adversarial and mutation tests, not coverage-guided fuzzing.
+
+`MAX_DID_BYTES` and `MAX_SOURCE_URI_BYTES` remain exported intentionally as
+method-neutral host-contract policy for the spike. Their API documentation now
+labels both limits provisional and warns consumers that Security/UX review may
+change them; they are not stable production commitments.
 
 This AC-9 change does not alter AC-10. Response-body completeness and size,
 redirects, resolved-address policy, timeouts, retries after per-source
@@ -362,7 +403,7 @@ Developer evidence and independent gate state are intentionally separate.
 | AC-6 | PASS | PASS at checkpoint `5147903814` | Stage 2 witness prefix and threshold evidence | Broader interpretation risk remains |
 | AC-7 | PASS | PASS at checkpoint `5147903814` | Typed irreversible deactivation evidence | Historical query semantics out of scope |
 | AC-8 | PASS | PASS at checkpoint `5147903814` | Freshness, exact prefix, rollback, fork, and source conflict evidence | Durable cache and first-use policy remain application-level |
-| AC-9 | DEVELOPER PASS — INDEPENDENT QAS PENDING | Focused QAS pending | Shared DID byte envelope at direct, URL, and remote-fetch boundaries; final URL bounds; zero-fetch and UTF-8 regressions; current 63-test suite | No coverage-guided fuzzing/benchmark; provisional limits require review |
+| AC-9 | DEVELOPER PASS — INDEPENDENT QAS PENDING | Focused revalidation pending after checkpoint `5160447019` | Shared DID byte envelope at direct, URL, and remote-fetch boundaries; public transformed-output and exact-input boundary regressions; final URL bounds; zero-fetch and UTF-8 regressions; current 65-test suite | No coverage-guided fuzzing/benchmark; provisional limits require review |
 | AC-10 | UNRESOLVED | FAIL at checkpoint `5147903814` | Existing deterministic transport controls were not changed in this task | Invalid-download fallback and all-attempt provenance remain unresolved |
 | AC-11 | PASS | PASS at checkpoint `5147903814` | Existing Rust/WASM and Chromium evidence | Chromium only; host/origin threats remain |
 | AC-12 | PASS | PASS at checkpoint `5147903814` | Existing pinned reciprocal interoperability evidence | Robin has no signed creation path |
@@ -380,6 +421,7 @@ Developer evidence and independent gate state are intentionally separate.
 | AC-7 append/stale restoration absent | Fixed with cacheable typed deactivation tip and irreversible lifecycle tests |
 | AC-8 higher divergent histories accepted | Fixed with exact cached-prefix inclusion/digest contract and fork/source tests |
 | AC-9 incomplete bounds/property evidence | Prior field/campaign remediation supplemented by shared early DID-envelope enforcement, final URL bounds, and zero-fetch regressions; focused QAS pending |
+| AC-9 public/exact boundary evidence gaps at checkpoint `5160447019` | Fixed with separate public regressions for exact 2,048-byte acceptance and reachable `%27` transformed-output overflow; focused QAS pending |
 | AC-10 unbounded policy/single source/no DNS contract | Partially remediated previously; invalid-download fallback and all-attempt provenance still fail prior QAS and remain unresolved |
 | AC-12 no reciprocal executable implementation | Fixed with `make interop`, exact independent pins, and comparison table; DIFF is retained honestly |
 | AC-13 overstated evidence | Criterion states are now role-qualified; AC-13 remains unresolved pending AC-10 and complete independent reconciliation |

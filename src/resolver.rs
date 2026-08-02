@@ -28,7 +28,15 @@ pub const MAX_TOTAL_EVIDENCE_BYTES: usize = 300 * 1024;
 pub const MAX_HISTORY_ENTRIES: usize = 1_024;
 /// Maximum bytes accepted in one JSONL entry.
 pub const MAX_ENTRY_BYTES: usize = 64 * 1024;
+/// Provisional spike-policy limit for method-neutral DID inputs.
+///
+/// This is an experimental host-contract value, not a stable production API;
+/// Security and UX review may change it.
 pub const MAX_DID_BYTES: usize = 2_048;
+/// Provisional spike-policy limit for method-neutral evidence-source URIs.
+///
+/// This is an experimental host-contract value, not a stable production API;
+/// Security and UX review may change it.
 pub const MAX_SOURCE_URI_BYTES: usize = 2_048;
 pub const MAX_TIMESTAMP_BYTES: usize = 64;
 pub const MAX_JSON_DEPTH: usize = 64;
