@@ -1,15 +1,30 @@
 use async_trait::async_trait;
 use robin_did_resolver_spike::{
     DidResolver, EvidenceFetcher, EvidenceSource, FetchError, FetchedEvidence, Freshness,
-    ResolutionError, ResolutionInput, SourceKind, TransportPolicy, WebvhResolver,
+    MAX_DID_BYTES, ResolutionError, ResolutionInput, SourceKind, TransportPolicy, WebvhResolver,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 
 const DID: &str = "did:webvh:QmUy89VrfryQ254CeHZzQfmcKqByPoKNGqYykP3SeXuegQ:example.com";
 
 fn fixture() -> ResolutionInput {
     serde_json::from_str(include_str!("fixtures/basic-create/input.json")).unwrap()
+}
+
+fn oversized_ascii_did() -> String {
+    let prefix = "did:webvh:";
+    let did = format!("{prefix}{}", "a".repeat(MAX_DID_BYTES + 1 - prefix.len()));
+    assert_eq!(did.len(), MAX_DID_BYTES + 1);
+    did
+}
+
+fn assert_did_byte_limit(error: ResolutionError) {
+    assert!(matches!(
+        error,
+        ResolutionError::ResourceLimit(message)
+            if message == "DID exceeds the configured byte limit"
+    ));
 }
 
 #[test]
@@ -42,6 +57,140 @@ fn rejects_ip_localhost_traversal_separator_and_fragment_smuggling() {
 
 struct StubFetcher {
     result: Result<FetchedEvidence, FetchError>,
+}
+
+struct CountingFetcher {
+    calls: Cell<usize>,
+    result: Result<FetchedEvidence, FetchError>,
+}
+
+#[async_trait(?Send)]
+impl EvidenceFetcher for CountingFetcher {
+    async fn fetch(
+        &self,
+        _log_url: &str,
+        _witness_url: &str,
+        _policy: &TransportPolicy,
+    ) -> Result<FetchedEvidence, FetchError> {
+        self.calls.set(self.calls.get() + 1);
+        self.result.clone()
+    }
+}
+
+#[test]
+fn oversized_did_is_rejected_before_url_parsing() {
+    assert_did_byte_limit(WebvhResolver::evidence_urls(&oversized_ascii_did()).unwrap_err());
+}
+
+#[tokio::test]
+async fn resolve_via_rejects_oversized_did_before_fetch() {
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
+        result: Err(FetchError::Unavailable),
+    };
+    let policy = TransportPolicy {
+        retries: 2,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via(
+            &oversized_ascii_did(),
+            &fetcher,
+            &policy,
+            Freshness::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_did_byte_limit(error);
+    assert_eq!(fetcher.calls.get(), 0);
+}
+
+fn valid_sources() -> [EvidenceSource; 2] {
+    [
+        EvidenceSource {
+            log_url: "https://one.example/did.jsonl".into(),
+            witness_url: "https://one.example/did-witness.json".into(),
+            source_kind: SourceKind::Watcher,
+        },
+        EvidenceSource {
+            log_url: "https://two.example/did.jsonl".into(),
+            witness_url: "https://two.example/did-witness.json".into(),
+            source_kind: SourceKind::Watcher,
+        },
+    ]
+}
+
+#[tokio::test]
+async fn resolve_via_sources_rejects_oversized_did_before_any_source_attempt() {
+    let input = fixture();
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
+        result: Ok(downloaded(input.raw_log)),
+    };
+    let policy = TransportPolicy {
+        retries: 0,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via_sources(
+            &oversized_ascii_did(),
+            &fetcher,
+            &valid_sources(),
+            &policy,
+            Freshness::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_did_byte_limit(error);
+    assert_eq!(fetcher.calls.get(), 0);
+}
+
+#[tokio::test]
+async fn oversized_did_bypasses_all_sources_and_retries() {
+    let input = fixture();
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
+        result: Ok(downloaded(input.raw_log)),
+    };
+    let policy = TransportPolicy {
+        retries: 2,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via_sources(
+            &oversized_ascii_did(),
+            &fetcher,
+            &valid_sources(),
+            &policy,
+            Freshness::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_did_byte_limit(error);
+    assert_eq!(fetcher.calls.get(), 0);
+}
+
+#[tokio::test]
+async fn multibyte_did_is_rejected_by_utf8_byte_length_before_fetch() {
+    let did = format!("did:webvh:{}", "é".repeat(MAX_DID_BYTES / 2));
+    let utf8_bytes = did.as_bytes();
+    assert!(did.chars().count() <= MAX_DID_BYTES);
+    assert!(utf8_bytes.len() > MAX_DID_BYTES);
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
+        result: Err(FetchError::Unavailable),
+    };
+    let error = WebvhResolver
+        .resolve_via(
+            &did,
+            &fetcher,
+            &TransportPolicy::default(),
+            Freshness::default(),
+        )
+        .await
+        .unwrap_err();
+    assert_did_byte_limit(error);
+    assert_eq!(fetcher.calls.get(), 0);
 }
 
 #[async_trait(?Send)]
@@ -370,7 +519,8 @@ async fn partial_length_mismatch_and_missing_native_addresses_fail_closed() {
 #[tokio::test]
 async fn safe_transport_can_supply_untrusted_bytes_for_local_verification() {
     let input = fixture();
-    let fetcher = StubFetcher {
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
         result: Ok(FetchedEvidence {
             raw_log: input.raw_log,
             raw_witnesses: None,
@@ -393,6 +543,7 @@ async fn safe_transport_can_supply_untrusted_bytes_for_local_verification() {
         output.evidence.source_uri,
         "https://example.com/.well-known/did.jsonl"
     );
+    assert_eq!(fetcher.calls.get(), 1);
 }
 
 #[tokio::test]

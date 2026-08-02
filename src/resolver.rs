@@ -292,6 +292,7 @@ impl WebvhResolver {
     /// Rejects malformed DIDs, IP literals, localhost, traversal, smuggled
     /// separators, or any transformation that does not yield HTTPS.
     pub fn evidence_urls(did: &str) -> Result<(String, String), ResolutionError> {
+        validate_did_envelope(did)?;
         let parsed = WebVHURL::parse_did_url(did).map_err(map_webvh_error)?;
         validate_remote_domain(&parsed.domain)?;
         if parsed.domain.eq_ignore_ascii_case("localhost") {
@@ -310,7 +311,10 @@ impl WebvhResolver {
                 "remote evidence must use HTTPS".into(),
             ));
         }
-        Ok((log.into(), witness.into()))
+        let log = log.to_string();
+        let witness = witness.to_string();
+        validate_transformed_url_bounds(&log, &witness)?;
+        Ok((log, witness))
     }
 
     /// Fetch untrusted evidence using a separately supplied policy-enforcing
@@ -327,6 +331,7 @@ impl WebvhResolver {
         policy: &TransportPolicy,
         freshness: Freshness,
     ) -> Result<ResolutionOutput, ResolutionError> {
+        validate_did_envelope(did)?;
         let (log_url, witness_url) = Self::evidence_urls(did)?;
         self.resolve_via_sources(
             did,
@@ -357,6 +362,7 @@ impl WebvhResolver {
         policy: &TransportPolicy,
         freshness: Freshness,
     ) -> Result<ResolutionOutput, ResolutionError> {
+        validate_did_envelope(did)?;
         validate_transport_policy(policy, sources)?;
         let mut attempts = Vec::new();
         let mut valid = Vec::new();
@@ -415,6 +421,31 @@ impl WebvhResolver {
         accepted.evidence.source_attempts = attempts;
         Ok(accepted)
     }
+}
+
+#[allow(clippy::needless_as_bytes)]
+fn validate_did_envelope(did: &str) -> Result<(), ResolutionError> {
+    if did.is_empty() {
+        return Err(ResolutionError::ResourceLimit("DID is empty".into()));
+    }
+    if did.as_bytes().len() > MAX_DID_BYTES {
+        return Err(ResolutionError::ResourceLimit(
+            "DID exceeds the configured byte limit".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_transformed_url_bounds(
+    log_url: &str,
+    witness_url: &str,
+) -> Result<(), ResolutionError> {
+    if log_url.len() > MAX_SOURCE_URI_BYTES || witness_url.len() > MAX_SOURCE_URI_BYTES {
+        return Err(ResolutionError::ResourceLimit(
+            "transformed evidence URL exceeds the configured byte limit".into(),
+        ));
+    }
+    Ok(())
 }
 
 fn validate_remote_domain(domain: &str) -> Result<(), ResolutionError> {
@@ -862,8 +893,8 @@ fn validate_envelope(input: &ResolutionInput) -> Result<(), ResolutionError> {
 }
 
 fn validate_input_bounds(input: &ResolutionInput) -> Result<(), ResolutionError> {
+    validate_did_envelope(&input.did)?;
     for (name, value, limit) in [
-        ("DID", input.did.as_str(), MAX_DID_BYTES),
         (
             "source URI",
             input.source_uri.as_str(),
@@ -1657,6 +1688,17 @@ mod tests {
             0xf7, 0x5a, 0x0d, 0xbf, 0x3a, 0x0d, 0x26, 0x38, 0x1a, 0xf4, 0xeb, 0xa4, 0xa9, 0x8e,
             0xaa, 0x9b, 0x4e, 0x6a,
         ]
+    }
+
+    #[test]
+    fn evidence_urls_reject_transformed_urls_over_source_uri_limit() {
+        let oversized = format!("https://example.com/{}", "a".repeat(MAX_SOURCE_URI_BYTES));
+        assert!(oversized.len() > MAX_SOURCE_URI_BYTES);
+        assert!(matches!(
+            validate_transformed_url_bounds("https://example.com/did.jsonl", &oversized),
+            Err(ResolutionError::ResourceLimit(message))
+                if message == "transformed evidence URL exceeds the configured byte limit"
+        ));
     }
 
     #[test]
