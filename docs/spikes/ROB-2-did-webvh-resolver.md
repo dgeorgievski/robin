@@ -1,6 +1,6 @@
 # ROB-2 — Rust/WASM `did:webvh` adversarial resolver spike
 
-Status: experimental Construction evidence after QAS remediation. This is not
+Status: experimental Construction evidence after Developer AC-9 remediation. This is not
 production implementation, final Design approval, or approval of
 `did:webvh`, any cryptographic suite, dependency, browser architecture, or
 transport policy.
@@ -52,7 +52,9 @@ cryptographic approval.
 
 ## Enforced limits and trust contract
 
-- DID and source URL: 2,048 bytes each; timestamp: 64 bytes.
+- DID and source URL: 2,048 UTF-8 bytes each; timestamp: 64 bytes. Every
+  resolver entry point rejects an oversized DID before syntax parsing, URL
+  transformation, source-policy processing, retries, or host fetch.
 - Log: 200 KiB; witness file: 200 KiB; combined evidence: 300 KiB.
 - History: 1,024 entries; witnessed history: 64 versions; entry: 64 KiB.
 - JSON depth: 64; JSON string/key: 16 KiB; repeated keys rejected.
@@ -69,6 +71,15 @@ cryptographic approval.
 - Browser WASM cannot observe resolved addresses, DNS/TLS processing, CORS,
   extensions, service workers, host JavaScript, or origin compromise. A
   trusted browser host must enforce what WASM cannot.
+
+The DID envelope is enforced by one internal `validate_did_envelope` helper.
+Direct/local `resolve` invokes it through `validate_input_bounds`; remote
+`evidence_urls`, `resolve_via`, and `resolve_via_sources` invoke it at their
+own trust boundaries. The check uses `did.as_bytes().len()`, returns the
+bounded typed diagnostic `ResourceLimit("DID exceeds the configured byte
+limit")`, and does not echo the hostile input. After transformation,
+`evidence_urls` separately verifies both complete output URLs against
+`MAX_SOURCE_URI_BYTES`; it never truncates or returns a partial pair.
 
 Missing `Content-Length` is permitted only because the host contract still
 must enforce the byte limit while streaming and set `complete=true`. A
@@ -152,7 +163,8 @@ was test-only; no private key, signing seed, or credential is retained in this
 repository. The expected public X25519 material is
 `z6LSkdrX4EvewpktHBjvNxRDogPdC5iVF8LT3LPKefGAgi89`.
 
-Focused and final observed results:
+Historical focused AC-4 results at immutable baseline
+`f1753c1a6d3c3057ab1b8eff057f75b6b76722f9`:
 
 - `cargo test --locked resolver::tests:: -- --nocapture` — PASS: 10 passed,
   0 failed, 0 ignored.
@@ -161,16 +173,27 @@ Focused and final observed results:
 - `cargo test --locked --test stage2 selects_valid_verified_authentication_multikey_from_immutable_state -- --exact` — PASS: 1 passed, 14 filtered.
 - `cargo test --locked --test stage2 selects_valid_verified_x25519_key_agreement_multikey -- --exact` — PASS: 1 passed, 14 filtered.
 - `cargo test --locked --test stage2 caller_visible_document_mutation_cannot_affect_key_selection -- --exact` — PASS: 1 passed, 14 filtered.
-- `cargo test --locked --all-targets` — PASS: 57 passed (10 unit, 16
-  Stage 1, 15 Stage 2, 16 Stage 3), 0 failed, 0 ignored; example targets had
-  0 tests.
+- `cargo test --locked --all-targets` — PASS: 57 total, 0 failed, 0 ignored:
+  - 10 unit;
+  - 16 Stage 1;
+  - 15 Stage 2;
+  - 16 Stage 3.
 - `cargo fmt --all -- --check` — PASS.
 - `cargo clippy --locked --all-targets --all-features -- -D warnings` — PASS.
-- `make test` — PASS: the same 55 tests, 0 failed, 0 ignored.
+- `make test` — PASS: 57 passed, 0 failed, 0 ignored.
 - `make lint`, `make run`, and `make wasm-check` — PASS.
 - `cargo test --locked --test stage2` — PASS: 15 passed, 0 failed, 0
   ignored.
-- `cargo test --locked resolver::tests::fake_prefix_material_is_rejected -- --exact` — PASS: 1 passed, 7 unit tests filtered; the other targets ran 0 tests and filtered 16/15/16.
+- `cargo test --locked resolver::tests::fake_prefix_material_is_rejected -- --exact` — PASS: 1 passed, 9 unit tests filtered; the other targets ran 0 tests and filtered 16/15/16.
+
+Post-AC-9 Developer regression results are recorded separately below. The new
+URL-bound unit regression increases the current focused resolver set to 11;
+it does not change the historical AC-4 result of 10 resolver unit tests.
+At implementation commit `6323f497df84b2c02f15566c3b60c629b17df8f0`,
+`cargo test --locked resolver::tests:: -- --nocapture` passed 11 unit tests
+with Stage 1/2/3 filtering 16/15/21, and the exact fake-prefix command passed
+1 with 10 current unit tests filtered. These current counts are regression
+evidence, not a rewrite of the immutable AC-4 baseline counts above.
 
 The final checks used Homebrew `rustc 1.96.0` and Cargo `1.96.0`; the WASM
 target used the pinned Rustup stable toolchain through `make wasm-check`.
@@ -220,6 +243,91 @@ witness set. This matches the security intent and the pinned TypeScript
 cumulative/pruned witness interpretation; that disagreement remains a Design
 and Security Review risk.
 
+### AC-9 remote-boundary remediation
+
+Independent QAS checkpoint `5147903814` found an ordering defect: direct
+`resolve` bounded the DID, but `evidence_urls` parsed and transformed it before
+checking the resource envelope, and `resolve_via_sources` could validate
+sources and invoke `EvidenceFetcher::fetch` before the inner `resolve` call
+rejected the DID. This meant a hostile oversized identifier could perform
+parser/normalization work or observable host I/O.
+
+The Developer remediation applies the shared DID envelope validator before
+work at all applicable public entry points:
+
+- direct/local `resolve` retains the same bound through `validate_input_bounds`;
+- `evidence_urls` rejects before `WebVHURL::parse_did_url`, domain extraction,
+  decoding, path processing, or URL generation;
+- `resolve_via` rejects before URL transformation and delegation; and
+- `resolve_via_sources` rejects before transport-policy checks, source
+  validation/iteration, retries, provenance creation, or any fetch call.
+
+`CountingFetcher` is a deterministic `Cell<usize>` test transport. The remote
+regressions use otherwise valid policies and sources, including two sources
+and two retries, and assert the counter remains exactly zero. A normal-DID
+regression asserts the same counter reaches exactly one, preserving the
+expected successful transport path. No DNS, HTTP, TLS, CORS, or external
+service participates.
+
+Focused AC-9 tests and observed results:
+
+- `oversized_did_is_rejected_before_url_parsing` — PASS: an exact
+  `MAX_DID_BYTES + 1` ASCII DID returns the stable `ResourceLimit` before a
+  parser-derived error.
+- `resolve_via_rejects_oversized_did_before_fetch` — PASS: two configured
+  retries, zero fetch calls.
+- `resolve_via_sources_rejects_oversized_did_before_any_source_attempt` —
+  PASS: valid multi-source configuration, zero fetch calls and no attempt
+  provenance can be created before the returned error.
+- `oversized_did_bypasses_all_sources_and_retries` — PASS: two sources, two
+  retries, zero total fetch calls.
+- `multibyte_did_is_rejected_by_utf8_byte_length_before_fetch` — PASS: the
+  character count is within `MAX_DID_BYTES`, the UTF-8 byte count exceeds it,
+  and rejection occurs before parsing or fetch. This is resource-accounting
+  evidence and does not imply Unicode is syntactically valid for `did:webvh`.
+- `resolver::tests::evidence_urls_reject_transformed_urls_over_source_uri_limit`
+  — PASS: the final bound helper returns the stable typed resource-limit error
+  for an over-limit complete URL. A public-path over-limit transformation is
+  unreachable under the current equal 2,048-byte DID/source constants because
+  the method transformation removes the DID method and SCID representation;
+  the final check remains mandatory against future constant or encoding
+  changes.
+- `safe_transport_can_supply_untrusted_bytes_for_local_verification` — PASS:
+  a normal valid DID reaches the deterministic fetcher exactly once and
+  resolves.
+
+Exact Developer results at implementation commit
+`6323f497df84b2c02f15566c3b60c629b17df8f0`:
+
+```text
+cargo test --locked oversized_did_is_rejected_before_url_parsing -- --exact
+cargo test --locked resolve_via_rejects_oversized_did_before_fetch -- --exact
+cargo test --locked resolve_via_sources_rejects_oversized_did_before_any_source_attempt -- --exact
+cargo test --locked oversized_did_bypasses_all_sources_and_retries -- --exact
+cargo test --locked resolver::tests::evidence_urls_reject_transformed_urls_over_source_uri_limit -- --exact
+cargo test --locked multibyte_did_is_rejected_by_utf8_byte_length_before_fetch -- --exact
+```
+
+- each of the six new focused tests run by exact name — PASS: 1 passed, 0
+  failed, 0 ignored;
+- `cargo test --locked --test stage3` — PASS: 21 passed, 0 failed, 0 ignored;
+- `cargo test --locked --all-targets` — PASS: 63 total (11 unit, 16 Stage 1,
+  15 Stage 2, 21 Stage 3), 0 failed, 0 ignored; example targets had 0 tests.
+
+The preserved Stage 3 corpus still covers duplicate JSON fields, deep and
+oversized JSON/evidence, malformed escapes, 64 deterministic signature
+mutations, Unicode/percent ambiguity, traversal and encoded separators, IP
+literals and disallowed IPv4/IPv6 classes, malformed proof/key encodings, the
+seeded 256-case URL-transformation campaign, and no-panic behavior. These are
+deterministic adversarial and mutation tests, not coverage-guided fuzzing.
+
+This AC-9 change does not alter AC-10. Response-body completeness and size,
+redirects, resolved-address policy, timeouts, retries after per-source
+download-validation failures, fallback, and all-attempt provenance are
+transport controls. AC-10 remains unresolved because the prior QAS fallback
+and provenance finding was not implemented here. Browser WASM still cannot
+independently enforce host DNS, TLS, CORS, streaming, or network controls.
+
 ## Interoperability comparison
 
 | Area | Robin result | Independent TypeScript result | Assessment |
@@ -241,24 +349,24 @@ verified reserialization, avoiding production DID-creation scope.
 
 ## Acceptance-criterion evidence (AC-13)
 
-Every row uses exactly one status. Test counts below are updated by the final
-Developer checkpoint if final gate execution differs.
+Developer evidence and independent gate state are intentionally separate.
+`PASS` in the Developer column is not an independent QAS verdict.
 
-| AC | Status | Implementation, tests, fixture origin | Exact evidence and negative coverage | Checks not run, limitations, residual risk |
+| Criterion | Developer evidence | Independent QAS state | Implementation and exact evidence | Limitations and residual risk |
 |---|---|---|---|---|
-| AC-1 | PASS | `src/lib.rs`, `src/resolver.rs`; boundary tests in all stages | `cargo test --locked --all-targets`: method-neutral contract, typed unsupported method/version, raw provenance, freshness/conflict state; no secret/document coupling | Only a `did:webvh` adapter exists; persistence/consumers are out of scope |
-| AC-2 | PASS | `tests/stage1.rs`; TypeScript `basic-create` plus `expected-did-document.json` at suite/TS pins above | Stage 1: SCID, inception, method ID, input DID, state DID `id`, and complete golden semantics; only service-endpoint trailing slash is normalized | No second browser implementation; service URL serialization difference remains |
-| AC-3 | PASS | `src/resolver.rs`, `tests/stage1.rs`; TypeScript update and pre-rotation histories | Stage 1: inserted/removed/skipped/duplicate/reordered entries; duplicate/non-monotonic version ID/number/time; future time; predecessor/content/proof/key/parameter/state mutations; deterministic 256-case campaign seed `0x524f422d32514153` | Structured mutation, not coverage-guided fuzzing; replay with `cargo test --locked --test stage1 deterministic_structured_mutation_campaign_rejects_256_cases -- --exact` |
-| AC-4 | PASS | private `ResolutionOutput`, decoded Multikey validator, `authorized_keys`; resolver unit tests, `tests/stage2.rs`, signed TypeScript `ac4-key-agreement` fixture | Unit and Stage 2: decoded Base58BTC/Multicodec/length/import matrix; verified Ed25519 authentication and X25519 key-agreement selection; immutable-copy regression; exact relationship; controller/type/material/duplicate/dangling/ambiguous/wrong-relationship behavior | Experimental allow-list and successful parsing are not production algorithm approval; dependency/cryptographic suitability remains for Security Review |
-| AC-5 | PASS | `tests/stage2.rs`; TypeScript `pre-rotation*` and `negative-pre-rotation-omit-updatekeys` | Stage 2: valid creation/consumption/next commitment; missing/mismatched/malformed/reused/omitted cases; correctly signed compromised-current-key bypass rejected | Controller recovery/storage lifecycle is outside resolver scope |
-| AC-6 | PASS | `validate_witness_policy`, prefix verifier, `tests/stage2.rs`; TypeScript witness vectors | Stage 2: signed 1-of-1 and 2-of-2, thresholds, insufficient/more proofs, duplicate identity/proof, zero/impossible, unauthorized/removed/unsupported, bad signature/type/version/replay/body-fragment/forgery | 1-of-N and 2-of-3 are structurally covered by the same distinct-set policy, not separate signed fixtures; upstream interpretation risk remains |
-| AC-7 | PASS | typed deactivation tip, `tests/stage2.rs`; TypeScript deactivation | Stage 2: authorized deactivation, no key/document return, post-deactivation append rejection, stale active restoration rejection | Historical query semantics are explicitly outside scope |
-| AC-8 | PASS | `Freshness`, `VerifiedTip`, prefix hashing; Stage 1 and Stage 3 | Stage 1: valid extension, stale prefix, same version/different ID, same tip/different evidence, higher fork, omitted/replaced tip, cross-DID state, first use; Stage 3 multi-source conflict | Durable cache, watcher quorum, first-use pinning, and cache-loss recovery are application-level |
-| AC-9 | PASS | all envelope/JSON/DID/source/witness bounds; Stage 1/3 campaigns | Stage 3: malformed/deep/oversized/repeated/Unicode/percent/path/IP/url/transport inputs, 256 URL cases seed `0x524f422d3255524c`, 64 signature mutations; no panic/unsafe URL | No coverage-guided fuzzing or benchmark; provisional limits require Security/UX review |
-| AC-10 | PASS | `TransportPolicy`, `EvidenceSource`, `EvidenceFetcher`, post-DNS checks; `tests/stage3.rs` | Stage 3: DNS/rebinding contract, TLS/CORS/timeout/retry exhaustion/404/5xx/redirect/truncation/partial/missing length/oversize/slow/unavailable/malicious bytes, alternate source, conflicting valid sources, attempt provenance | Deterministic transports only; live DNS/TLS/CORS and browser post-DNS enforcement not claimed |
-| AC-11 | PASS | `src/wasm.rs`, browser harness, Makefile | `make wasm-check`; optimized Rustup-stable build and `wasm-bindgen`; Chromium displayed the exact DID/version PASS with 0 console errors/warnings; raw 2,110,840 bytes, processed 1,621,438 bytes | Chromium-only evidence; WASM does not protect against hostile host/origin/extension/service worker |
-| AC-12 | PASS | `tests/stage3.rs`, `examples/export_interop.rs`, `scripts/interop.sh`, `make interop`; exact suite/TS/runtime pins | Robin resolves independent lifecycle fixtures; independent TS executes Robin-verified reserialization and returns DIFF rather than resolver failure; table above records differences | Robin has no signed creation path; reciprocal lifecycle generation and ecosystem-wide equivalence are not claimed |
-| AC-13 | PASS | this report, source/tests/fixtures/Makefile/Cargo lock | Every AC has status, files, commands, observed scope, omitted checks, limitations, and residual risk; final checkpoint records exact gate outputs | Independent QAS and Security Review remain pending; no production/final Design claim |
+| AC-1 | PASS | PASS at checkpoint `5147903814` | Method-neutral contract and typed failures in all stages | Persistence/consumers are out of scope |
+| AC-2 | PASS | PASS at checkpoint `5147903814` | Stage 1 independent golden and negative identity/SCID cases | Service URL serialization difference remains |
+| AC-3 | PASS | PASS at checkpoint `5147903814` | Stage 1 history matrix and deterministic 256-case campaign | Structured mutation, not coverage-guided fuzzing |
+| AC-4 | PASS | Documentation correction pending focused revalidation | Historical 57-test baseline: 10 unit, 16 Stage 1, 15 Stage 2, 16 Stage 3; accepted behavior and regressions described above | Experimental allow-list; Security Review pending |
+| AC-5 | PASS | PASS at checkpoint `5147903814` | Stage 2 pre-rotation positive/negative matrix | Recovery/storage lifecycle out of scope |
+| AC-6 | PASS | PASS at checkpoint `5147903814` | Stage 2 witness prefix and threshold evidence | Broader interpretation risk remains |
+| AC-7 | PASS | PASS at checkpoint `5147903814` | Typed irreversible deactivation evidence | Historical query semantics out of scope |
+| AC-8 | PASS | PASS at checkpoint `5147903814` | Freshness, exact prefix, rollback, fork, and source conflict evidence | Durable cache and first-use policy remain application-level |
+| AC-9 | DEVELOPER PASS — INDEPENDENT QAS PENDING | Focused QAS pending | Shared DID byte envelope at direct, URL, and remote-fetch boundaries; final URL bounds; zero-fetch and UTF-8 regressions; current 63-test suite | No coverage-guided fuzzing/benchmark; provisional limits require review |
+| AC-10 | UNRESOLVED | FAIL at checkpoint `5147903814` | Existing deterministic transport controls were not changed in this task | Invalid-download fallback and all-attempt provenance remain unresolved |
+| AC-11 | PASS | PASS at checkpoint `5147903814` | Existing Rust/WASM and Chromium evidence | Chromium only; host/origin threats remain |
+| AC-12 | PASS | PASS at checkpoint `5147903814` | Existing pinned reciprocal interoperability evidence | Robin has no signed creation path |
+| AC-13 | UNRESOLVED | FAIL until complete evidence reconciliation | This report corrects AC-4 and records Developer AC-9 evidence only | AC-10, full QAS, Security Review, and final Design remain pending |
 
 ## Delta from QAS checkpoint 5144888667
 
@@ -271,10 +379,10 @@ Developer checkpoint if final gate execution differs.
 | AC-6 threshold/duplicate evidence incomplete | Fixed with distinct-set policy, every-prefix cryptographic verification, signed 2-of-2 vector, and negative matrix |
 | AC-7 append/stale restoration absent | Fixed with cacheable typed deactivation tip and irreversible lifecycle tests |
 | AC-8 higher divergent histories accepted | Fixed with exact cached-prefix inclusion/digest contract and fork/source tests |
-| AC-9 incomplete bounds/property evidence | Fixed with field limits and deterministic parsing/URL campaigns |
-| AC-10 unbounded policy/single source/no DNS contract | Fixed with hard total budgets, bounded fallback, provenance, conflicts, and post-DNS address policy |
+| AC-9 incomplete bounds/property evidence | Prior field/campaign remediation supplemented by shared early DID-envelope enforcement, final URL bounds, and zero-fetch regressions; focused QAS pending |
+| AC-10 unbounded policy/single source/no DNS contract | Partially remediated previously; invalid-download fallback and all-attempt provenance still fail prior QAS and remain unresolved |
 | AC-12 no reciprocal executable implementation | Fixed with `make interop`, exact independent pins, and comparison table; DIFF is retained honestly |
-| AC-13 overstated evidence | Replaced with the per-AC evidence model above and explicit limitations |
+| AC-13 overstated evidence | Criterion states are now role-qualified; AC-13 remains unresolved pending AC-10 and complete independent reconciliation |
 
 ## Reproducible commands
 
@@ -300,10 +408,17 @@ cargo test --locked --test stage3 deterministic_url_transformation_campaign_neve
 
 ## Checks not run and residual risks
 
+- `make interop` and exact TypeScript fixture regeneration were not run because
+  no interoperability implementation or fixture changed in this focused task.
+- Real-browser execution was not run; `make wasm-check` verifies compilation of
+  the changed resolver for `wasm32-unknown-unknown`, while the existing browser
+  limitations remain unchanged and explicit above.
 - Coverage-guided fuzzing, sanitizers, Miri, formal verification, performance
   benchmarking, live hostile networks, and a multi-browser/device matrix are
   not part of the approved spike.
 - Independent Security Review and fresh QAS are not performed by Developer.
+- AC-10 fallback/provenance validation and AC-13 full reconciliation were not
+  run or implemented because both are explicitly outside this task.
 - Browser-origin, JavaScript, extension, service-worker, DNS, TLS, CORS, and
   post-DNS controls remain host trust boundaries.
 - First-use fork protection and durable rollback storage remain application
