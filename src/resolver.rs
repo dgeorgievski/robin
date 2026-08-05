@@ -157,20 +157,60 @@ pub struct Evidence {
     pub source_attempts: Vec<SourceAttempt>,
 }
 
+/// Ordered, sanitized provenance for one actual source fetch invocation.
+///
+/// Fields serialize with camelCase names. `source_index` is zero-based in the
+/// caller-supplied source list, while `attempt_number` is one-based per source.
+/// The phase and outcome serialization contracts are documented on
+/// [`SourceAttemptPhase`] and [`SourceAttemptOutcome`]. For example, a DNS
+/// rejection serializes as:
+///
+/// ```json
+/// {
+///   "sourceUri": "https://example.test/did.jsonl",
+///   "witnessUri": "https://example.test/did-witness.json",
+///   "sourceKind": "watcher",
+///   "sourceIndex": 0,
+///   "attemptNumber": 1,
+///   "phase": "transport",
+///   "outcome": {
+///     "category": "transportRejected",
+///     "detail": "dns"
+///   },
+///   "locallyVerified": false
+/// }
+/// ```
+///
+/// This transport/provenance model is an experimental spike API, not a stable
+/// production compatibility commitment. Security and Design review may change
+/// its public shape or semantics.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SourceAttempt {
+    /// Validated, bounded log URI supplied for this source request.
     pub source_uri: String,
+    /// Validated, bounded witness URI supplied for this source request.
     pub witness_uri: String,
+    /// Method-neutral classification of the requested evidence source.
     pub source_kind: SourceKind,
+    /// Zero-based position of the source in the caller-supplied source list.
     pub source_index: usize,
+    /// One-based invocation number for this source; every value identifies an
+    /// actual call to [`EvidenceFetcher::fetch`].
     pub attempt_number: u8,
+    /// Furthest processing boundary reached by this fetch invocation.
     pub phase: SourceAttemptPhase,
+    /// Stable, sanitized result category for this fetch invocation.
     pub outcome: SourceAttemptOutcome,
+    /// Whether the downloaded evidence reached and passed local method
+    /// verification.
     pub locally_verified: bool,
 }
 
 /// Processing boundary reached by one actual source request.
+///
+/// Variants serialize as camelCase string values such as `"transport"` and
+/// `"localMethodVerification"`.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum SourceAttemptPhase {
@@ -180,6 +220,16 @@ pub enum SourceAttemptPhase {
 }
 
 /// Stable, bounded result of one actual source request.
+///
+/// Serialization uses a camelCase `category` tag and a `detail` member when
+/// the variant carries a supporting failure category. A successful local
+/// verification has no `detail` member:
+///
+/// ```json
+/// {
+///   "category": "locallyVerified"
+/// }
+/// ```
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", tag = "category", content = "detail")]
 pub enum SourceAttemptOutcome {
@@ -190,6 +240,9 @@ pub enum SourceAttemptOutcome {
 }
 
 /// Sanitized transport failure classification retained in attempt provenance.
+///
+/// Variants serialize as camelCase values; no untrusted transport error text
+/// is retained.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum TransportFailureKind {
@@ -207,6 +260,8 @@ pub enum TransportFailureKind {
 }
 
 /// Sanitized host-contract failure classification retained in provenance.
+///
+/// Variants serialize as camelCase values; no downloaded evidence is retained.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum DownloadFailureKind {
@@ -220,6 +275,9 @@ pub enum DownloadFailureKind {
 }
 
 /// Sanitized local verification failure classification retained in provenance.
+///
+/// Variants serialize as camelCase values; no parser or verifier display text
+/// is retained.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum LocalFailureKind {

@@ -375,8 +375,9 @@ transport-successful response that violated the host contract aborted the
 entire source set. Second, source exhaustion and valid-source disagreement
 discarded the accumulated attempt history.
 
-The focused remediation changes `src/resolver.rs`, `src/lib.rs`, and
-`tests/stage3.rs` only:
+The historical focused AC-10 remediation changes exactly `src/resolver.rs`,
+`src/lib.rs`, `tests/stage3.rs`, and this evidence document,
+`docs/spikes/ROB-2-did-webvh-resolver.md`:
 
 - every configured source descriptor is validated before the first fetch, so
   a malformed later descriptor produces a typed preflight error and zero
@@ -450,8 +451,13 @@ Developer validation at the focused AC-10 worktree:
   unit, 16 Stage 1, 15 Stage 2, 41 Stage 3), 0 failed, 0 ignored;
 - formatting, Clippy with warnings denied, locked offline metadata, `make
   lint`, `make run`, and `make wasm-check` — PASS;
-- the unchanged 256-case URL transformation and 64-case proof/signature
-  mutation campaigns passed exactly, preserving AC-9 evidence.
+- the unchanged 256-case URL transformation campaign and the exact 64-case
+  `deterministic_signature_mutations_never_resolve` proof/signature mutation
+  campaign passed, preserving AC-9 evidence. Developer checkpoint `5194287768`
+  used the nonexistent filter
+  `deterministic_signature_mutations_fail_closed_without_panics`; that command
+  selected zero tests and is corrected here without editing the historical
+  checkpoint or renaming the real test.
 
 Native checks used Homebrew `rustc 1.96.0` and Cargo `1.96.0`; WASM used
 Rustup stable `rustc 1.97.1`. Cargo used the locked cached dependency graph and
