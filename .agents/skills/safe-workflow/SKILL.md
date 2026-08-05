@@ -1,108 +1,169 @@
 ---
 name: safe-workflow
-description: Use for starting, implementing, validating, resuming, or preparing Robin GitHub issue work with SAFE role boundaries, durable checkpoint comments, and evidence gates. Do not use for simple questions that make no repository change.
+description: Use for Robin GitHub issue work that must follow SAFE role boundaries, immutable Git history, durable issue checkpoints, focused acceptance-criterion evidence, independent validation, or release handoff. Apply this skill when starting, resuming, implementing, validating, or preparing issue-scoped work. Do not use for simple questions or repository tasks that do not require SAFE gates.
 ---
 
 # SAFE Workflow for Robin
 
-Use this sequence for a single issue or cohesive change:
+This skill is the shared control plane for Robin SAFE work. Role agents should keep only role-specific behavior in their own definitions and rely on this skill for the common workflow below.
 
-1. **Resume** — read the GitHub issue and its comments, locate the latest valid checkpoint, and reconcile it with the current branch, commit, worktree, and available evidence.
-2. **Define** — BSA states outcome, scope, non-goals, testable acceptance criteria, and security concerns.
-3. **Design** — System Architect reviews architecture and trust boundaries when the change is material.
-4. **Implement** — Developer makes a focused change and records checks run.
-5. **Validate** — QAS independently maps every acceptance criterion to evidence.
-6. **Release** — RTE assembles evidence and declares the work ready for human review.
+## 1. Resume from durable state
 
-Do not collapse implementation and independent validation into one role for security-sensitive work. A human owns ambiguous product decisions, credentials, destructive operations, production changes, and final merge approval.
+For issue-scoped work:
 
-## GitHub issue checkpoint contract
+1. Read the issue body and all comments.
+2. Locate the latest valid `<!-- robin-safe-checkpoint:v1 -->` checkpoint.
+3. Reconcile its branch, commit, acceptance-criterion state, and next action with current Git state and fresh command output.
+4. Treat Git state and fresh evidence as authoritative when checkpoint prose is stale.
+5. Append a reconciliation checkpoint before continuing when state diverges materially.
 
-GitHub Issues are Robin's durable system of record for SAFE work. The issue body
-holds stable scope, acceptance criteria, and Definition of Done. Append a new
-checkpoint comment at every completed gate, whenever work becomes blocked, before
-an expected interruption, and before ending a session with unfinished work. Do
-not edit an older checkpoint to represent new state.
+Do not rewrite an older checkpoint to represent new state.
 
-Every checkpoint comment must start with this exact marker:
+## 2. Preserve role boundaries
+
+- **BSA:** defines outcome, scope, non-goals, testable acceptance criteria, dependencies, and product/security decisions.
+- **System Architect:** reviews architecture, trust boundaries, constraints, and evidence gates.
+- **Developer:** implements the smallest focused change and records exact evidence.
+- **QAS:** independently validates the immutable diff and does not repair it.
+- **RTE:** prepares the human-reviewed release handoff only after all required gates pass.
+
+Do not collapse Developer and QAS for security-sensitive work. Human approval remains required for ambiguous requirements, credentials, destructive operations, production changes, publishing, and final merge.
+
+## 3. Reconcile immutable Git scope
+
+Before implementation or validation, establish:
+
+- repository and issue;
+- branch;
+- baseline commit;
+- target commit or expected new commit;
+- ancestry;
+- exact commit count in the focused delta;
+- changed files;
+- clean worktree.
+
+Never amend, squash away, rebase away, force-push over, or otherwise rewrite prior SAFE evidence unless a human explicitly authorizes history rewriting.
+
+QAS should validate in a detached worktree or equivalent isolated checkout. Developer should preserve unrelated work and stage only files in scope.
+
+## 4. Keep prompts criterion-specific
+
+Task prompts should contain only information that changes per task:
+
+- issue and criterion;
+- branch, baseline, and target SHA;
+- prior checkpoint identifiers;
+- exact failed or required behavior;
+- unique tests or evidence;
+- acceptance criteria already passed or still unresolved.
+
+Do not repeat the common Git, checkpoint, verdict, privacy, or role-boundary rules from this skill unless the task overrides them.
+
+## 5. Evidence rules
+
+For every claimed result:
+
+- record the exact command;
+- record exit status and relevant counts;
+- distinguish observed results from expected results;
+- identify checks not run and why;
+- record generated files and network use when relevant;
+- never invent a passing check;
+- never convert unavailable evidence into PASS;
+- keep deterministic simulation distinct from live environment testing;
+- keep mutation/property campaigns distinct from coverage-guided fuzzing.
+
+Prefer focused tests first, then the affected suite, then full repository gates.
+
+Use repository-defined commands when available. Typical Rust gates are:
+
+```bash
+cargo fmt --all -- --check
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets --all-features -- -D warnings
+cargo metadata --locked --offline --format-version 1 --no-deps
+make test
+make lint
+make run
+make wasm-check
+```
+
+Run only commands relevant to the delta, and list every omitted gate with the exact reason.
+
+## 6. Safety and privacy
+
+Never place credentials, keys, secret values, raw protected fixtures, authorization headers, cookies, private material, or unsafe command output in commits, prompts, logs, or checkpoints.
+
+Use bounded, sanitized error categories instead of copying arbitrary untrusted error text. Link to safe repository evidence rather than pasting sensitive output.
+
+## 7. Verdict semantics
+
+Use evidence-based criterion verdicts:
+
+- **PASS:** every required behavior and evidence gate was independently established.
+- **FAIL:** one or more required behaviors or evidence claims failed.
+- **BLOCKED:** required repository state, tooling, execution, or checkpoint persistence was unavailable.
+
+A focused PASS is not a full issue PASS. Preserve previously passed criteria and explicitly retain unresolved criteria. Do not claim Security Review, Approved for RTE, production readiness, or final Design approval before those gates occur.
+
+## 8. Checkpoint contract
+
+Every checkpoint must begin exactly with:
 
 ```markdown
 <!-- robin-safe-checkpoint:v1 -->
 ```
 
-Then record:
+Then include:
 
-- UTC timestamp and SAFE phase
-- role and status
-- last completed gate
-- branch and commit SHA, or `not created` with a reason
-- completed work and acceptance-criterion progress
-- exact validation evidence, including failures and checks not run
-- decisions, blockers, and residual risks
-- one concrete next action and the expected exit state
+- UTC timestamp;
+- SAFE phase;
+- role and status;
+- branch and relevant commit SHA(s), or `not created` with a reason;
+- scope and acceptance-criterion state;
+- exact validation evidence;
+- findings, failures, and checks not run;
+- blockers and residual risks;
+- one concrete next owner/action;
+- expected exit state.
 
-Never put credentials, keys, secret values, sensitive fixtures, or other secret
-material in an issue or checkpoint. Link to safe repository evidence instead of
-copying sensitive output.
+Append a checkpoint:
 
-Before resuming work, read all checkpoint comments and select the latest one that
-matches the issue and workflow version. Compare its branch and commit with the
-local repository, inspect `git status` and relevant diffs, and confirm that its
-evidence applies to the current commit. If state diverged, reconcile it and append
-a new checkpoint explaining the discrepancy before continuing. Git state and
-fresh command output override stale checkpoint prose.
+- after each completed SAFE gate;
+- when work becomes blocked;
+- before an expected interruption;
+- before ending unfinished work;
+- at Developer handoff;
+- at QAS verdict.
 
-Use the available GitHub issue-comment capability to persist the checkpoint. If
-GitHub is unavailable or a role cannot write comments, return a complete
-ready-to-post checkpoint block to the parent agent and mark persistence BLOCKED.
-Do not claim the role's handoff is complete until the checkpoint is recorded on
-the issue.
+If checkpoint persistence fails, return a complete ready-to-post block and mark persistence BLOCKED. Do not claim the handoff is complete until the checkpoint is recorded.
 
-## Working conventions
+## 9. Role handoff requirements
 
-- Suggested branch: `ROB-123-short-description` when a ticket exists; otherwise use the repository's current convention.
-- Suggested commit: `type(scope): description [ROB-123]`.
-- Include the GitHub issue number in every delegated role prompt.
-- Never invent a passing test. Record the command, result, and any checks that could not run.
-- Do not claim completion while required acceptance criteria are blocked.
+### Developer handoff
 
-Example evidence:
+Include:
 
-```markdown
-Ticket: ROB-123
-Outcome: <user-visible result>
-Validation:
-- `dart test` — PASS (42 tests)
-- `dart analyze` — PASS
-Risks/blocked checks: None
-QAS verdict: Approved for RTE
-```
+- starting and final commit;
+- implementation summary;
+- focused and full checks;
+- acceptance-criterion state;
+- checks not run;
+- residual risks;
+- exact QAS scope and baseline/target.
 
-Example checkpoint:
+### QAS handoff
 
-```markdown
-<!-- robin-safe-checkpoint:v1 -->
+Include:
 
-## SAFE checkpoint — Construction
+- immutable reconciliation;
+- PASS/FAIL/BLOCKED per criterion in scope;
+- independent commands and observed results;
+- findings by severity;
+- checks not run;
+- residual risks;
+- exact next owner/action.
 
-- Recorded: 2026-07-22T18:00:00Z
-- Role: Developer
-- Status: In progress
-- Last completed gate: Design approved
-- Branch: ROB-123-encrypted-storage
-- Commit: 31d9c82
+### RTE handoff
 
-Completed:
-- Added the storage interface and encryption implementation.
-
-Evidence:
-- `make test` — PASS (18 tests)
-
-Blockers and risks:
-- Secure deletion remains incomplete.
-
-Next action:
-- Implement secure deletion, rerun the full test suite, and hand off to QAS.
-
-Expected exit: Ready for QAS
-```
+Proceed only when all required criteria and independent gates pass. Summarize PR-ready evidence and the remaining human action; do not merge without explicit authorization.
