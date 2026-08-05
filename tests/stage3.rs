@@ -1,9 +1,10 @@
 use async_trait::async_trait;
 use didwebvh_rs::url::WebVHURL;
 use robin_did_resolver_spike::{
-    DidResolver, EvidenceFetcher, EvidenceSource, FetchError, FetchedEvidence, Freshness,
-    MAX_DID_BYTES, MAX_SOURCE_URI_BYTES, ResolutionError, ResolutionInput, SourceKind,
-    TransportPolicy, WebvhResolver,
+    DidResolver, DownloadFailureKind, EvidenceFetcher, EvidenceSource, FetchError, FetchedEvidence,
+    Freshness, LocalFailureKind, MAX_DID_BYTES, MAX_SOURCE_URI_BYTES, ResolutionError,
+    ResolutionInput, SourceAttempt, SourceAttemptOutcome, SourceAttemptPhase, SourceKind,
+    TransportFailureKind, TransportPolicy, WebvhResolver,
 };
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
@@ -280,48 +281,91 @@ impl EvidenceFetcher for StubFetcher {
 
 #[tokio::test]
 async fn transport_failures_are_typed_and_fail_closed() {
-    for error in [
-        FetchError::Dns,
-        FetchError::Tls,
-        FetchError::Cors,
-        FetchError::Timeout,
-        FetchError::Http(404),
-        FetchError::Http(500),
-        FetchError::Redirect,
-        FetchError::TooLarge,
-        FetchError::Unavailable,
-        FetchError::DnsRebinding,
-        FetchError::Truncated,
-        FetchError::SlowStream,
+    for (fetch_error, expected) in [
+        (FetchError::Dns, TransportFailureKind::Dns),
+        (FetchError::Tls, TransportFailureKind::Tls),
+        (FetchError::Cors, TransportFailureKind::Cors),
+        (FetchError::Timeout, TransportFailureKind::Timeout),
+        (FetchError::Http(404), TransportFailureKind::HttpStatus(404)),
+        (FetchError::Http(500), TransportFailureKind::HttpStatus(500)),
+        (FetchError::Redirect, TransportFailureKind::Redirect),
+        (FetchError::TooLarge, TransportFailureKind::TooLarge),
+        (FetchError::Unavailable, TransportFailureKind::Unavailable),
+        (FetchError::DnsRebinding, TransportFailureKind::DnsRebinding),
+        (FetchError::Truncated, TransportFailureKind::Truncated),
+        (FetchError::SlowStream, TransportFailureKind::SlowStream),
     ] {
-        let fetcher = StubFetcher { result: Err(error) };
-        assert!(matches!(
-            WebvhResolver
-                .resolve_via(
-                    DID,
-                    &fetcher,
-                    &TransportPolicy::default(),
-                    Freshness::default()
-                )
-                .await,
-            Err(ResolutionError::NetworkUnavailable(_))
-        ));
+        let fetcher = StubFetcher {
+            result: Err(fetch_error),
+        };
+        let error = WebvhResolver
+            .resolve_via(
+                DID,
+                &fetcher,
+                &TransportPolicy::default(),
+                Freshness::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, ResolutionError::SourcesExhausted { .. }));
+        assert_eq!(error.source_attempts().len(), 2);
+        assert!(error.source_attempts().iter().all(|attempt| {
+            attempt.phase == SourceAttemptPhase::Transport
+                && attempt.outcome == SourceAttemptOutcome::TransportRejected(expected.clone())
+                && !attempt.locally_verified
+        }));
     }
 }
 
 struct ScriptedFetcher {
     results: RefCell<VecDeque<Result<FetchedEvidence, FetchError>>>,
+    calls: RefCell<Vec<FetchCall>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FetchCall {
+    log_url: String,
+    witness_url: String,
+    policy: TransportPolicy,
+}
+
+impl ScriptedFetcher {
+    fn new(results: impl IntoIterator<Item = Result<FetchedEvidence, FetchError>>) -> Self {
+        Self {
+            results: RefCell::new(results.into_iter().collect()),
+            calls: RefCell::new(Vec::new()),
+        }
+    }
+
+    fn calls(&self) -> Vec<FetchCall> {
+        self.calls.borrow().clone()
+    }
+
+    fn assert_exhausted(&self) {
+        assert!(
+            self.results.borrow().is_empty(),
+            "resolver made fewer fetch calls than the script expected"
+        );
+    }
 }
 
 #[async_trait(?Send)]
 impl EvidenceFetcher for ScriptedFetcher {
     async fn fetch(
         &self,
-        _log_url: &str,
-        _witness_url: &str,
-        _policy: &TransportPolicy,
+        log_url: &str,
+        witness_url: &str,
+        policy: &TransportPolicy,
     ) -> Result<FetchedEvidence, FetchError> {
-        self.results.borrow_mut().pop_front().unwrap()
+        self.calls.borrow_mut().push(FetchCall {
+            log_url: log_url.into(),
+            witness_url: witness_url.into(),
+            policy: policy.clone(),
+        });
+        self.results
+            .borrow_mut()
+            .pop_front()
+            .expect("resolver made more fetch calls than the script allowed")
     }
 }
 
@@ -337,95 +381,141 @@ fn downloaded(raw_log: String) -> FetchedEvidence {
     }
 }
 
+fn source(name: &str, source_kind: SourceKind) -> EvidenceSource {
+    EvidenceSource {
+        log_url: format!("https://{name}.example/did.jsonl"),
+        witness_url: format!("https://{name}.example/did-witness.json"),
+        source_kind,
+    }
+}
+
+#[allow(clippy::needless_pass_by_value)]
+fn assert_attempt(
+    attempt: &SourceAttempt,
+    source: &EvidenceSource,
+    source_index: usize,
+    attempt_number: u8,
+    phase: SourceAttemptPhase,
+    outcome: SourceAttemptOutcome,
+    locally_verified: bool,
+) {
+    assert_eq!(attempt.source_uri, source.log_url);
+    assert_eq!(attempt.witness_uri, source.witness_url);
+    assert_eq!(attempt.source_kind, source.source_kind);
+    assert_eq!(attempt.source_index, source_index);
+    assert_eq!(attempt.attempt_number, attempt_number);
+    assert_eq!(attempt.phase, phase);
+    assert_eq!(attempt.outcome, outcome);
+    assert_eq!(attempt.locally_verified, locally_verified);
+}
+
+fn assert_calls(fetcher: &ScriptedFetcher, sources: &[EvidenceSource], expected: &[usize]) {
+    let calls = fetcher.calls();
+    assert_eq!(calls.len(), expected.len());
+    for (call, source_index) in calls.iter().zip(expected) {
+        assert_eq!(call.log_url, sources[*source_index].log_url);
+        assert_eq!(call.witness_url, sources[*source_index].witness_url);
+    }
+}
+
 #[tokio::test]
 async fn bounded_source_fallback_records_every_attempt() {
     let input = fixture();
-    let fetcher = ScriptedFetcher {
-        results: RefCell::new(VecDeque::from([
-            Err(FetchError::Dns),
-            Err(FetchError::Timeout),
-            Ok(downloaded(input.raw_log)),
-        ])),
-    };
+    let fetcher = ScriptedFetcher::new([
+        Err(FetchError::Dns),
+        Err(FetchError::Timeout),
+        Ok(downloaded(input.raw_log)),
+    ]);
     let sources = [
-        EvidenceSource {
-            log_url: "https://unavailable.example/did.jsonl".into(),
-            witness_url: "https://unavailable.example/did-witness.json".into(),
-            source_kind: SourceKind::Watcher,
-        },
-        EvidenceSource {
-            log_url: "https://alternate.example/did.jsonl".into(),
-            witness_url: "https://alternate.example/did-witness.json".into(),
-            source_kind: SourceKind::Watcher,
-        },
+        source("unavailable", SourceKind::Watcher),
+        source("alternate", SourceKind::Watcher),
     ];
     let policy = TransportPolicy::default();
     let output = WebvhResolver
         .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
         .await
         .unwrap();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 0, 1]);
     assert_eq!(output.evidence.source_attempts.len(), 3);
-    assert!(output.evidence.source_attempts[0].outcome.contains("DNS"));
+    assert_attempt(
+        &output.evidence.source_attempts[0],
+        &sources[0],
+        0,
+        1,
+        SourceAttemptPhase::Transport,
+        SourceAttemptOutcome::TransportRejected(TransportFailureKind::Dns),
+        false,
+    );
+    assert_attempt(
+        &output.evidence.source_attempts[1],
+        &sources[0],
+        0,
+        2,
+        SourceAttemptPhase::Transport,
+        SourceAttemptOutcome::TransportRejected(TransportFailureKind::Timeout),
+        false,
+    );
+    assert_attempt(
+        &output.evidence.source_attempts[2],
+        &sources[1],
+        1,
+        1,
+        SourceAttemptPhase::LocalMethodVerification,
+        SourceAttemptOutcome::LocallyVerified,
+        true,
+    );
     assert_eq!(output.evidence.source_uri, sources[1].log_url);
 }
 
 #[tokio::test]
-async fn conflicting_locally_valid_sources_fail_closed() {
-    let fetcher = ScriptedFetcher {
-        results: RefCell::new(VecDeque::from([
-            Ok(downloaded(
-                include_str!("fixtures/basic-update/did.jsonl").into(),
-            )),
-            Ok(downloaded(
-                include_str!("fixtures/key-rotation/did.jsonl").into(),
-            )),
-        ])),
-    };
+async fn conflicting_valid_sources_return_attempt_provenance() {
+    let fetcher = ScriptedFetcher::new([
+        Ok(downloaded(
+            include_str!("fixtures/basic-update/did.jsonl").into(),
+        )),
+        Ok(downloaded(
+            include_str!("fixtures/key-rotation/did.jsonl").into(),
+        )),
+    ]);
     let sources = [
-        EvidenceSource {
-            log_url: "https://one.example/did.jsonl".into(),
-            witness_url: "https://one.example/did-witness.json".into(),
-            source_kind: SourceKind::Watcher,
-        },
-        EvidenceSource {
-            log_url: "https://two.example/did.jsonl".into(),
-            witness_url: "https://two.example/did-witness.json".into(),
-            source_kind: SourceKind::Watcher,
-        },
+        source("one", SourceKind::Watcher),
+        source("two", SourceKind::Watcher),
     ];
     let policy = TransportPolicy {
         retries: 0,
         ..TransportPolicy::default()
     };
-    assert!(matches!(
-        WebvhResolver
-            .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
-            .await,
-        Err(ResolutionError::Conflict(_))
-    ));
+    let error = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap_err();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 1]);
+    assert!(matches!(error, ResolutionError::SourceConflict { .. }));
+    assert_eq!(error.source_attempts().len(), 2);
+    for (index, attempt) in error.source_attempts().iter().enumerate() {
+        assert_attempt(
+            attempt,
+            &sources[index],
+            index,
+            1,
+            SourceAttemptPhase::LocalMethodVerification,
+            SourceAttemptOutcome::LocallyVerified,
+            true,
+        );
+    }
+    assert!(!error.to_string().contains("versionId"));
 }
 
 #[tokio::test]
 async fn malicious_remote_assertion_is_rejected_before_valid_alternate() {
     let input = fixture();
     let malicious = input.raw_log.replacen("z2gbCNg9", "z2gbCNh9", 1);
-    let fetcher = ScriptedFetcher {
-        results: RefCell::new(VecDeque::from([
-            Ok(downloaded(malicious)),
-            Ok(downloaded(input.raw_log)),
-        ])),
-    };
+    let fetcher = ScriptedFetcher::new([Ok(downloaded(malicious)), Ok(downloaded(input.raw_log))]);
     let sources = [
-        EvidenceSource {
-            log_url: "https://resolver.example/did.jsonl".into(),
-            witness_url: "https://resolver.example/did-witness.json".into(),
-            source_kind: SourceKind::RemoteResolver,
-        },
-        EvidenceSource {
-            log_url: "https://direct.example/did.jsonl".into(),
-            witness_url: "https://direct.example/did-witness.json".into(),
-            source_kind: SourceKind::DirectHttps,
-        },
+        source("resolver", SourceKind::RemoteResolver),
+        source("direct", SourceKind::DirectHttps),
     ];
     let policy = TransportPolicy {
         retries: 0,
@@ -435,15 +525,21 @@ async fn malicious_remote_assertion_is_rejected_before_valid_alternate() {
         .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
         .await
         .unwrap();
-    assert!(
-        output.evidence.source_attempts[0]
-            .outcome
-            .contains("locally rejected")
-    );
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 1]);
+    assert!(matches!(
+        output.evidence.source_attempts[0].outcome,
+        SourceAttemptOutcome::LocalMethodRejected(
+            LocalFailureKind::InvalidProof
+                | LocalFailureKind::InvalidHistory
+                | LocalFailureKind::InvalidScid
+        )
+    ));
     assert_eq!(output.evidence.source_uri, sources[1].log_url);
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn transport_policy_and_post_dns_contract_are_hard_bounded() {
     let unsafe_policies = [
         TransportPolicy {
@@ -542,50 +638,551 @@ async fn transport_policy_and_post_dns_contract_are_hard_bounded() {
                         Freshness::default()
                     )
                     .await,
-                Err(ResolutionError::NetworkUnavailable(_))
+                Err(ResolutionError::SourcesExhausted { attempts })
+                    if attempts.len() == 1
+                        && attempts.iter().all(|attempt| matches!(
+                            attempt.outcome,
+                            SourceAttemptOutcome::DownloadRejected(
+                                DownloadFailureKind::DisallowedResolvedAddress
+                            )
+                        ))
             ),
             "disallowed address accepted: {address}"
         );
     }
 }
 
-#[tokio::test]
-async fn partial_length_mismatch_and_missing_native_addresses_fail_closed() {
+async fn assert_download_fallback(
+    invalid: FetchedEvidence,
+    expected: DownloadFailureKind,
+    policy: TransportPolicy,
+) {
     let input = fixture();
-    let mut partial = downloaded(input.raw_log.clone());
-    partial.complete = false;
-    let mut mismatched = downloaded(input.raw_log.clone());
-    mismatched.content_length = Some(mismatched.raw_log.len() + 1);
-    for evidence in [partial, mismatched] {
-        let fetcher = StubFetcher {
-            result: Ok(evidence),
-        };
-        assert!(
-            WebvhResolver
-                .resolve_via(
-                    DID,
-                    &fetcher,
-                    &TransportPolicy::default(),
-                    Freshness::default()
-                )
-                .await
-                .is_err()
-        );
-    }
-    let mut missing = downloaded(input.raw_log);
-    missing.resolved_addresses.clear();
-    let fetcher = StubFetcher {
-        result: Ok(missing),
+    let fetcher = ScriptedFetcher::new([Ok(invalid), Ok(downloaded(input.raw_log.clone()))]);
+    let sources = [
+        source("invalid", SourceKind::RemoteResolver),
+        source("valid", SourceKind::DirectHttps),
+    ];
+    let output = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 1]);
+    assert_eq!(output.metadata.version_number, 1);
+    assert_eq!(output.evidence.source_uri, sources[1].log_url);
+    assert_eq!(output.evidence.source_kind, sources[1].source_kind);
+    assert_eq!(output.evidence.raw_log, input.raw_log);
+    assert_eq!(output.evidence.source_attempts.len(), 2);
+    assert_attempt(
+        &output.evidence.source_attempts[0],
+        &sources[0],
+        0,
+        1,
+        SourceAttemptPhase::DownloadValidation,
+        SourceAttemptOutcome::DownloadRejected(expected),
+        false,
+    );
+    assert_attempt(
+        &output.evidence.source_attempts[1],
+        &sources[1],
+        1,
+        1,
+        SourceAttemptPhase::LocalMethodVerification,
+        SourceAttemptOutcome::LocallyVerified,
+        true,
+    );
+}
+
+#[tokio::test]
+async fn partial_download_falls_back_to_valid_alternate() {
+    let mut invalid = downloaded(fixture().raw_log);
+    invalid.complete = false;
+    assert_download_fallback(
+        invalid,
+        DownloadFailureKind::Incomplete,
+        TransportPolicy::default(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn content_length_mismatch_falls_back_to_valid_alternate() {
+    let mut invalid = downloaded(fixture().raw_log);
+    invalid.content_length = Some(invalid.raw_log.len() + 1);
+    assert_download_fallback(
+        invalid,
+        DownloadFailureKind::DeclaredLengthMismatch,
+        TransportPolicy::default(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn oversized_download_falls_back_to_valid_alternate() {
+    let input = fixture();
+    let policy = TransportPolicy {
+        max_response_bytes: input.raw_log.len(),
+        ..TransportPolicy::default()
     };
+    let mut invalid = downloaded(format!("{}x", input.raw_log));
+    invalid.content_length = Some(invalid.raw_log.len());
+    assert_download_fallback(invalid, DownloadFailureKind::LogTooLarge, policy).await;
+}
+
+#[tokio::test]
+async fn oversized_witness_falls_back_to_valid_alternate() {
+    let mut invalid = downloaded(fixture().raw_log);
+    invalid.raw_witnesses = Some("w".repeat(200 * 1024 + 1));
+    assert_download_fallback(
+        invalid,
+        DownloadFailureKind::WitnessTooLarge,
+        TransportPolicy::default(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn oversized_combined_evidence_falls_back_to_valid_alternate() {
+    let mut invalid = downloaded("l".repeat(180_000));
+    invalid.raw_witnesses = Some("w".repeat(130_000));
+    assert_download_fallback(
+        invalid,
+        DownloadFailureKind::CombinedEvidenceTooLarge,
+        TransportPolicy::default(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn missing_required_addresses_falls_back_to_valid_alternate() {
+    let mut invalid = downloaded(fixture().raw_log);
+    invalid.resolved_addresses.clear();
     let policy = TransportPolicy {
         require_resolved_addresses: true,
         ..TransportPolicy::default()
     };
-    assert!(
+    assert_download_fallback(
+        invalid,
+        DownloadFailureKind::MissingResolvedAddresses,
+        policy,
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn disallowed_resolved_address_falls_back_to_valid_alternate() {
+    for addresses in [
+        vec!["127.0.0.1"],
+        vec!["10.0.0.1"],
+        vec!["169.254.1.1"],
+        vec!["0.0.0.0"],
+        vec!["192.0.2.1"],
+        vec!["93.184.216.34", "::1"],
+        vec!["::"],
+        vec!["fc00::1"],
+        vec!["fe80::1"],
+        vec!["2001:db8::1"],
+    ] {
+        let mut invalid = downloaded(fixture().raw_log);
+        invalid.resolved_addresses = addresses
+            .into_iter()
+            .map(|address| address.parse().unwrap())
+            .collect();
+        assert_download_fallback(
+            invalid,
+            DownloadFailureKind::DisallowedResolvedAddress,
+            TransportPolicy::default(),
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+async fn missing_content_length_complete_body_is_accepted() {
+    let input = fixture();
+    let mut evidence = downloaded(input.raw_log);
+    evidence.content_length = None;
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
+        result: Ok(evidence),
+    };
+    let output = WebvhResolver
+        .resolve_via(
+            DID,
+            &fetcher,
+            &TransportPolicy::default(),
+            Freshness::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(fetcher.calls.get(), 1);
+    assert_eq!(output.evidence.source_attempts.len(), 1);
+    assert!(matches!(
+        output.evidence.source_attempts[0].outcome,
+        SourceAttemptOutcome::LocallyVerified
+    ));
+}
+
+#[tokio::test]
+async fn all_transport_failures_return_complete_attempt_provenance() {
+    let fetcher = ScriptedFetcher::new([
+        Err(FetchError::Dns),
+        Err(FetchError::Timeout),
+        Err(FetchError::Tls),
+        Err(FetchError::Cors),
+    ]);
+    let sources = [
+        source("one", SourceKind::Watcher),
+        source("two", SourceKind::DirectHttps),
+    ];
+    let error = WebvhResolver
+        .resolve_via_sources(
+            DID,
+            &fetcher,
+            &sources,
+            &TransportPolicy::default(),
+            Freshness::default(),
+        )
+        .await
+        .unwrap_err();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 0, 1, 1]);
+    let attempts = error.source_attempts();
+    assert_eq!(attempts.len(), 4);
+    for (index, attempt_number, outcome) in [
+        (0, 1, TransportFailureKind::Dns),
+        (0, 2, TransportFailureKind::Timeout),
+        (1, 1, TransportFailureKind::Tls),
+        (1, 2, TransportFailureKind::Cors),
+    ] {
+        let attempt = &attempts[usize::from(attempt_number - 1) + index * 2];
+        assert_attempt(
+            attempt,
+            &sources[index],
+            index,
+            attempt_number,
+            SourceAttemptPhase::Transport,
+            SourceAttemptOutcome::TransportRejected(outcome),
+            false,
+        );
+    }
+    assert!(matches!(error, ResolutionError::SourcesExhausted { .. }));
+    assert!(!error.to_string().contains("did.jsonl"));
+}
+
+#[tokio::test]
+async fn all_invalid_downloads_return_complete_attempt_provenance() {
+    let input = fixture();
+    let mut partial = downloaded(input.raw_log.clone());
+    partial.complete = false;
+    let mut mismatch = downloaded(input.raw_log);
+    mismatch.content_length = Some(mismatch.raw_log.len() + 1);
+    let fetcher = ScriptedFetcher::new([Ok(partial), Ok(mismatch)]);
+    let sources = [
+        source("partial", SourceKind::RemoteResolver),
+        source("mismatch", SourceKind::Watcher),
+    ];
+    let policy = TransportPolicy {
+        retries: 2,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap_err();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 1]);
+    assert_eq!(error.source_attempts().len(), 2);
+    assert_attempt(
+        &error.source_attempts()[0],
+        &sources[0],
+        0,
+        1,
+        SourceAttemptPhase::DownloadValidation,
+        SourceAttemptOutcome::DownloadRejected(DownloadFailureKind::Incomplete),
+        false,
+    );
+    assert_attempt(
+        &error.source_attempts()[1],
+        &sources[1],
+        1,
+        1,
+        SourceAttemptPhase::DownloadValidation,
+        SourceAttemptOutcome::DownloadRejected(DownloadFailureKind::DeclaredLengthMismatch),
+        false,
+    );
+    assert!(matches!(error, ResolutionError::SourcesExhausted { .. }));
+}
+
+#[tokio::test]
+async fn all_locally_invalid_histories_return_complete_attempt_provenance() {
+    let input = fixture();
+    let invalid_one = input.raw_log.replacen("z2gbCNg9", "z2gbCNh9", 1);
+    let invalid_two = input.raw_log.replacen("z2gbCNg9", "z2gbCNi9", 1);
+    let fetcher = ScriptedFetcher::new([Ok(downloaded(invalid_one)), Ok(downloaded(invalid_two))]);
+    let sources = [
+        source("invalid-one", SourceKind::RemoteResolver),
+        source("invalid-two", SourceKind::Watcher),
+    ];
+    let policy = TransportPolicy {
+        retries: 0,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap_err();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 1]);
+    assert_eq!(error.source_attempts().len(), 2);
+    for (index, attempt) in error.source_attempts().iter().enumerate() {
+        assert_eq!(attempt.source_index, index);
+        assert_eq!(attempt.attempt_number, 1);
+        assert_eq!(attempt.phase, SourceAttemptPhase::LocalMethodVerification);
+        assert!(matches!(
+            attempt.outcome,
+            SourceAttemptOutcome::LocalMethodRejected(_)
+        ));
+        assert!(!attempt.locally_verified);
+    }
+    assert!(matches!(error, ResolutionError::SourcesExhausted { .. }));
+}
+
+#[tokio::test]
+async fn mixed_failures_return_ordered_complete_attempt_provenance() {
+    let input = fixture();
+    let mut partial = downloaded(input.raw_log.clone());
+    partial.complete = false;
+    let malicious = input.raw_log.replacen("z2gbCNg9", "z2gbCNh9", 1);
+    let fetcher =
+        ScriptedFetcher::new([Err(FetchError::Dns), Ok(partial), Ok(downloaded(malicious))]);
+    let sources = [
+        source("transport", SourceKind::DirectHttps),
+        source("download", SourceKind::Watcher),
+        source("method", SourceKind::RemoteResolver),
+    ];
+    let policy = TransportPolicy {
+        retries: 0,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap_err();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 1, 2]);
+    let attempts = error.source_attempts();
+    assert_eq!(attempts.len(), 3);
+    assert!(matches!(
+        attempts[0].outcome,
+        SourceAttemptOutcome::TransportRejected(TransportFailureKind::Dns)
+    ));
+    assert!(matches!(
+        attempts[1].outcome,
+        SourceAttemptOutcome::DownloadRejected(DownloadFailureKind::Incomplete)
+    ));
+    assert!(matches!(
+        attempts[2].outcome,
+        SourceAttemptOutcome::LocalMethodRejected(_)
+    ));
+    assert_eq!(
+        attempts
+            .iter()
+            .map(|attempt| attempt.source_index)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert!(matches!(error, ResolutionError::SourcesExhausted { .. }));
+    assert!(!error.to_string().contains("proofValue"));
+}
+
+#[tokio::test]
+async fn invalid_later_source_is_preflight_rejected_before_traffic() {
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
+        result: Err(FetchError::Unavailable),
+    };
+    let sources = [
+        source("valid", SourceKind::Watcher),
+        EvidenceSource {
+            log_url: "http://invalid.example/did.jsonl".into(),
+            witness_url: "https://invalid.example/did-witness.json".into(),
+            source_kind: SourceKind::Watcher,
+        },
+    ];
+    let error = WebvhResolver
+        .resolve_via_sources(
+            DID,
+            &fetcher,
+            &sources,
+            &TransportPolicy::default(),
+            Freshness::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ResolutionError::NetworkUnavailable(_)));
+    assert!(error.source_attempts().is_empty());
+    assert_eq!(fetcher.calls.get(), 0);
+}
+
+#[tokio::test]
+async fn one_source_zero_retries_attempt_budget_is_exact() {
+    let fetcher = ScriptedFetcher::new([Err(FetchError::Dns)]);
+    let sources = [source("only", SourceKind::Watcher)];
+    let policy = TransportPolicy {
+        retries: 0,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap_err();
+    fetcher.assert_exhausted();
+    assert_eq!(fetcher.calls().len(), 1);
+    assert_eq!(error.source_attempts().len(), 1);
+    assert_eq!(error.source_attempts()[0].attempt_number, 1);
+}
+
+#[tokio::test]
+async fn one_source_maximum_retries_attempt_budget_is_exact() {
+    let fetcher = ScriptedFetcher::new([
+        Err(FetchError::Dns),
+        Err(FetchError::Timeout),
+        Err(FetchError::Tls),
+    ]);
+    let sources = [source("only", SourceKind::Watcher)];
+    let policy = TransportPolicy {
+        retries: 2,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap_err();
+    fetcher.assert_exhausted();
+    assert_eq!(fetcher.calls().len(), 3);
+    assert_eq!(error.source_attempts().len(), 3);
+    assert_eq!(
+        error
+            .source_attempts()
+            .iter()
+            .map(|attempt| attempt.attempt_number)
+            .collect::<Vec<_>>(),
+        vec![1, 2, 3]
+    );
+}
+
+#[tokio::test]
+async fn last_permitted_attempt_can_succeed() {
+    let input = fixture();
+    let fetcher = ScriptedFetcher::new([
+        Err(FetchError::Dns),
+        Err(FetchError::Timeout),
+        Err(FetchError::Tls),
+        Err(FetchError::Cors),
+        Err(FetchError::Unavailable),
+        Ok(downloaded(input.raw_log)),
+    ]);
+    let sources = [
+        source("one", SourceKind::Watcher),
+        source("two", SourceKind::DirectHttps),
+    ];
+    let policy = TransportPolicy {
+        retries: 2,
+        ..TransportPolicy::default()
+    };
+    let output = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 0, 0, 1, 1, 1]);
+    assert!(fetcher.calls().iter().all(|call| call.policy == policy));
+    assert_eq!(output.evidence.source_attempts.len(), 6);
+    assert_eq!(output.evidence.source_uri, sources[1].log_url);
+    assert_eq!(output.evidence.source_attempts[5].attempt_number, 3);
+    assert!(output.evidence.source_attempts[5].locally_verified);
+}
+
+#[tokio::test]
+async fn configuration_exceeding_total_attempt_budget_is_preflight_rejected() {
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
+        result: Err(FetchError::Unavailable),
+    };
+    let sources = [
+        source("one", SourceKind::Watcher),
+        source("two", SourceKind::Watcher),
+        source("three", SourceKind::Watcher),
+    ];
+    let policy = TransportPolicy {
+        retries: 2,
+        ..TransportPolicy::default()
+    };
+    assert!(matches!(
         WebvhResolver
-            .resolve_via(DID, &fetcher, &policy, Freshness::default())
-            .await
-            .is_err()
+            .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+            .await,
+        Err(ResolutionError::NetworkUnavailable(_))
+    ));
+    assert_eq!(fetcher.calls.get(), 0);
+}
+
+#[tokio::test]
+async fn configuration_exceeding_total_timeout_budget_is_preflight_rejected() {
+    let fetcher = CountingFetcher {
+        calls: Cell::new(0),
+        result: Err(FetchError::Unavailable),
+    };
+    let sources = [
+        source("one", SourceKind::Watcher),
+        source("two", SourceKind::Watcher),
+    ];
+    let policy = TransportPolicy {
+        timeout_millis: 30_000,
+        retries: 1,
+        ..TransportPolicy::default()
+    };
+    let error = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap_err();
+    assert!(matches!(error, ResolutionError::NetworkUnavailable(_)));
+    assert!(error.source_attempts().is_empty());
+    assert_eq!(fetcher.calls.get(), 0);
+}
+
+#[tokio::test]
+async fn first_matching_verified_source_is_selected_deterministically() {
+    let input = fixture();
+    let fetcher = ScriptedFetcher::new([
+        Ok(downloaded(input.raw_log.clone())),
+        Ok(downloaded(input.raw_log)),
+    ]);
+    let sources = [
+        source("first", SourceKind::Watcher),
+        source("second", SourceKind::DirectHttps),
+    ];
+    let policy = TransportPolicy {
+        retries: 0,
+        ..TransportPolicy::default()
+    };
+    let output = WebvhResolver
+        .resolve_via_sources(DID, &fetcher, &sources, &policy, Freshness::default())
+        .await
+        .unwrap();
+    fetcher.assert_exhausted();
+    assert_calls(&fetcher, &sources, &[0, 1]);
+    assert_eq!(output.evidence.source_uri, sources[0].log_url);
+    assert_eq!(output.evidence.source_kind, sources[0].source_kind);
+    assert_eq!(output.evidence.source_attempts.len(), 2);
+    assert!(
+        output
+            .evidence
+            .source_attempts
+            .iter()
+            .all(|attempt| attempt.locally_verified)
     );
 }
 
@@ -651,7 +1248,12 @@ async fn rejects_unsafe_policy_and_transport_bound_violation() {
         WebvhResolver
             .resolve_via(DID, &fetcher, &tiny_policy, Freshness::default())
             .await,
-        Err(ResolutionError::ResourceLimit(_))
+        Err(ResolutionError::SourcesExhausted { attempts })
+            if attempts.len() == 1
+                && matches!(
+                    attempts[0].outcome,
+                    SourceAttemptOutcome::DownloadRejected(DownloadFailureKind::LogTooLarge)
+                )
     ));
 }
 

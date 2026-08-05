@@ -8,10 +8,11 @@
 mod resolver;
 
 pub use resolver::{
-    AuthorizedKey, DidResolver, Evidence, EvidenceFetcher, EvidenceSource, FetchError,
-    FetchedEvidence, Freshness, MAX_DID_BYTES, MAX_SOURCE_URI_BYTES, ResolutionError,
-    ResolutionInput, ResolutionMetadata, ResolutionOutput, SourceAttempt, SourceKind,
-    TransportPolicy, VerifiedTip, WebvhResolver,
+    AuthorizedKey, DidResolver, DownloadFailureKind, Evidence, EvidenceFetcher, EvidenceSource,
+    FetchError, FetchedEvidence, Freshness, LocalFailureKind, MAX_DID_BYTES, MAX_SOURCE_URI_BYTES,
+    ResolutionError, ResolutionInput, ResolutionMetadata, ResolutionOutput, SourceAttempt,
+    SourceAttemptOutcome, SourceAttemptPhase, SourceKind, TransportFailureKind, TransportPolicy,
+    VerifiedTip, WebvhResolver,
 };
 
 #[cfg(feature = "wasm")]

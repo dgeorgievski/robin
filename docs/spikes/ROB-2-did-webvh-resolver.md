@@ -1,7 +1,7 @@
 # ROB-2 — Rust/WASM `did:webvh` adversarial resolver spike
 
-Status: experimental Construction evidence after focused Developer AC-9
-boundary-evidence remediation. This is not production implementation, final
+Status: experimental Construction evidence after focused Developer AC-10
+fallback/provenance remediation. This is not production implementation, final
 Design approval, or approval of `did:webvh`, any cryptographic suite,
 dependency, browser architecture, or transport policy.
 
@@ -362,12 +362,108 @@ method-neutral host-contract policy for the spike. Their API documentation now
 labels both limits provisional and warns consumers that Security/UX review may
 change them; they are not stable production commitments.
 
-This AC-9 change does not alter AC-10. Response-body completeness and size,
-redirects, resolved-address policy, timeouts, retries after per-source
-download-validation failures, fallback, and all-attempt provenance are
-transport controls. AC-10 remains unresolved because the prior QAS fallback
-and provenance finding was not implemented here. Browser WASM still cannot
-independently enforce host DNS, TLS, CORS, streaming, or network controls.
+Focused QAS checkpoint `5193259574` independently passed AC-9 at immutable
+commit `1abe6a5f14ff1f13d8c867e42327d6a64beb40fd`. The AC-10 work below preserves
+the early DID envelope, public transformed-output guard, exact-limit behavior,
+zero-fetch ordering, and deterministic AC-9 campaigns validated there.
+
+### AC-10 invalid-download fallback and attempt provenance
+
+QAS checkpoint `5147903814` identified two remaining AC-10 defects. First,
+`resolve_via_sources` used `validate_download(&downloaded, policy)?`, so a
+transport-successful response that violated the host contract aborted the
+entire source set. Second, source exhaustion and valid-source disagreement
+discarded the accumulated attempt history.
+
+The focused remediation changes `src/resolver.rs`, `src/lib.rs`, and
+`tests/stage3.rs` only:
+
+- every configured source descriptor is validated before the first fetch, so
+  a malformed later descriptor produces a typed preflight error and zero
+  traffic;
+- transport errors retry in source order within `policy.retries`; each actual
+  fetch increments the ordered attempt list exactly once;
+- download-validation failures are deterministic and non-retryable for the
+  returned bytes. They are recorded once for that source, never reach local
+  method verification, and immediately advance to the next source;
+- local method-verification failures are recorded without retaining their
+  untrusted display text, then advance to the next source;
+- `SourceAttempt` records bounded log and witness URIs, source kind/index,
+  one-based attempt number, typed phase, typed stable outcome, and whether the
+  bytes were locally verified. It never contains downloaded logs, witnesses,
+  proofs, headers, credentials, cookies, keys, seeds, or protected plaintext;
+- `ResolutionError::SourcesExhausted` and
+  `ResolutionError::SourceConflict` carry the complete ordered attempt list;
+  `source_attempts()` exposes it without parsing error display text;
+- the first locally verified source supplies returned raw evidence. All
+  configured sources are still consulted in stable order to detect a
+  verified-tip or history-prefix disagreement; matching verified sources keep
+  the first selection, while disagreement fails closed with all attempts.
+
+The typed phases remain distinct:
+
+- transport: DNS, TLS, CORS, timeout, HTTP, redirect, transport oversize,
+  unavailable, rebinding, truncation, and slow-stream classifications;
+- download validation: incomplete body, declared-length mismatch, log,
+  witness, or combined size violation, missing required resolved addresses,
+  and any disallowed resolved address;
+- local method verification: sanitized error categories for malformed log,
+  invalid SCID/history/proof/witness, stale/deactivated/conflicting state, and
+  the other method-boundary failures.
+
+Focused deterministic Stage 3 evidence:
+
+- `partial_download_falls_back_to_valid_alternate`;
+- `content_length_mismatch_falls_back_to_valid_alternate`;
+- `oversized_download_falls_back_to_valid_alternate`;
+- `oversized_witness_falls_back_to_valid_alternate`;
+- `oversized_combined_evidence_falls_back_to_valid_alternate`;
+- `missing_required_addresses_falls_back_to_valid_alternate`;
+- `disallowed_resolved_address_falls_back_to_valid_alternate`, including
+  loopback, private, link-local, unspecified, reserved/documentation, IPv6,
+  and mixed allowed/disallowed address sets;
+- `missing_content_length_complete_body_is_accepted`, proving absent optional
+  `Content-Length` remains valid for a complete bounded body;
+- `all_transport_failures_return_complete_attempt_provenance`;
+- `all_invalid_downloads_return_complete_attempt_provenance`;
+- `all_locally_invalid_histories_return_complete_attempt_provenance`;
+- `mixed_failures_return_ordered_complete_attempt_provenance`;
+- `conflicting_valid_sources_return_attempt_provenance`;
+- preflight, exact retry/attempt/total-timeout-budget, last-permitted-success,
+  first-source selection, retained transport fallback, and
+  malicious-assertion regressions.
+
+All required tests use deterministic in-process transports. They inspect the
+requested log/witness URLs, supplied policy, call/source/retry order, typed
+phase/outcome, selected source, and final result. No live DNS, TLS, HTTP, CORS,
+CDN, or outage endpoint is claimed. Browser WASM still cannot independently
+observe post-DNS addresses or enforce DNS, TLS, CORS, streaming, JavaScript,
+extension, service-worker, or origin integrity policy; a trusted host remains
+responsible for those controls.
+
+Developer validation at the focused AC-10 worktree:
+
+- every new focused test and the retained transport/fallback tests passed by
+  exact name;
+- `cargo test --locked --test stage3` — PASS: 41 passed, 0 failed, 0 ignored;
+- `cargo test --locked --all-targets` and `make test` — PASS: 83 total (11
+  unit, 16 Stage 1, 15 Stage 2, 41 Stage 3), 0 failed, 0 ignored;
+- formatting, Clippy with warnings denied, locked offline metadata, `make
+  lint`, `make run`, and `make wasm-check` — PASS;
+- the unchanged 256-case URL transformation and 64-case proof/signature
+  mutation campaigns passed exactly, preserving AC-9 evidence.
+
+Native checks used Homebrew `rustc 1.96.0` and Cargo `1.96.0`; WASM used
+Rustup stable `rustc 1.97.1`. Cargo used the locked cached dependency graph and
+the offline metadata command confirmed no dependency-network requirement.
+Only ignored `target/` build output was generated; no tracked generated file,
+fixture, dependency manifest, or lockfile changed. Network access was required
+only for GitHub reconciliation, checkpoint persistence, and the normal branch
+push.
+
+This deterministic contract evidence does not claim live DNS rebinding, TLS,
+CORS, CDN/outage, or browser post-DNS enforcement; it does not establish
+production transport hardening or Security Review approval.
 
 ## Interoperability comparison
 
@@ -398,16 +494,16 @@ Developer evidence and independent gate state are intentionally separate.
 | AC-1 | PASS | PASS at checkpoint `5147903814` | Method-neutral contract and typed failures in all stages | Persistence/consumers are out of scope |
 | AC-2 | PASS | PASS at checkpoint `5147903814` | Stage 1 independent golden and negative identity/SCID cases | Service URL serialization difference remains |
 | AC-3 | PASS | PASS at checkpoint `5147903814` | Stage 1 history matrix and deterministic 256-case campaign | Structured mutation, not coverage-guided fuzzing |
-| AC-4 | PASS | Documentation correction pending focused revalidation | Historical 57-test baseline: 10 unit, 16 Stage 1, 15 Stage 2, 16 Stage 3; accepted behavior and regressions described above | Experimental allow-list; Security Review pending |
+| AC-4 | PASS | PASS retained at checkpoints `5160447019` and `5193259574` | Historical 57-test baseline: 10 unit, 16 Stage 1, 15 Stage 2, 16 Stage 3; accepted behavior and regressions described above | Experimental allow-list; Security Review pending |
 | AC-5 | PASS | PASS at checkpoint `5147903814` | Stage 2 pre-rotation positive/negative matrix | Recovery/storage lifecycle out of scope |
 | AC-6 | PASS | PASS at checkpoint `5147903814` | Stage 2 witness prefix and threshold evidence | Broader interpretation risk remains |
 | AC-7 | PASS | PASS at checkpoint `5147903814` | Typed irreversible deactivation evidence | Historical query semantics out of scope |
 | AC-8 | PASS | PASS at checkpoint `5147903814` | Freshness, exact prefix, rollback, fork, and source conflict evidence | Durable cache and first-use policy remain application-level |
-| AC-9 | DEVELOPER PASS — INDEPENDENT QAS PENDING | Focused revalidation pending after checkpoint `5160447019` | Shared DID byte envelope at direct, URL, and remote-fetch boundaries; public transformed-output and exact-input boundary regressions; final URL bounds; zero-fetch and UTF-8 regressions; current 65-test suite | No coverage-guided fuzzing/benchmark; provisional limits require review |
-| AC-10 | UNRESOLVED | FAIL at checkpoint `5147903814` | Existing deterministic transport controls were not changed in this task | Invalid-download fallback and all-attempt provenance remain unresolved |
+| AC-9 | PASS | PASS at checkpoint `5193259574` | Shared DID byte envelope at direct, URL, and remote-fetch boundaries; public transformed-output and exact-input boundary regressions; final URL bounds; zero-fetch and UTF-8 regressions | No coverage-guided fuzzing/benchmark; provisional limits require review |
+| AC-10 | DEVELOPER PASS — INDEPENDENT QAS PENDING | Focused QAS pending after failure at checkpoint `5147903814` | Structured attempts; invalid-download fallback; terminal/conflict provenance; preflight and budget tests; current 83-test suite | Deterministic host simulation only; production trust boundary and browser controls remain unapproved |
 | AC-11 | PASS | PASS at checkpoint `5147903814` | Existing Rust/WASM and Chromium evidence | Chromium only; host/origin threats remain |
 | AC-12 | PASS | PASS at checkpoint `5147903814` | Existing pinned reciprocal interoperability evidence | Robin has no signed creation path |
-| AC-13 | UNRESOLVED | FAIL until complete evidence reconciliation | This report corrects AC-4 and records Developer AC-9 evidence only | AC-10, full QAS, Security Review, and final Design remain pending |
+| AC-13 | UNRESOLVED | FAIL until complete evidence reconciliation | This report records focused AC-10 Developer evidence without performing the complete issue reconciliation | Focused AC-10 QAS, full issue QAS, Security Review, and final Design remain pending |
 
 ## Delta from QAS checkpoint 5144888667
 
@@ -422,7 +518,7 @@ Developer evidence and independent gate state are intentionally separate.
 | AC-8 higher divergent histories accepted | Fixed with exact cached-prefix inclusion/digest contract and fork/source tests |
 | AC-9 incomplete bounds/property evidence | Prior field/campaign remediation supplemented by shared early DID-envelope enforcement, final URL bounds, and zero-fetch regressions; focused QAS pending |
 | AC-9 public/exact boundary evidence gaps at checkpoint `5160447019` | Fixed with separate public regressions for exact 2,048-byte acceptance and reachable `%27` transformed-output overflow; focused QAS pending |
-| AC-10 unbounded policy/single source/no DNS contract | Partially remediated previously; invalid-download fallback and all-attempt provenance still fail prior QAS and remain unresolved |
+| AC-10 invalid-download short-circuit and discarded attempts | Fixed in Developer evidence with non-retryable download rejection/fallback, structured ordered attempts, typed exhaustion/conflict errors, preflight validation, deterministic selection, and boundary tests; focused QAS pending |
 | AC-12 no reciprocal executable implementation | Fixed with `make interop`, exact independent pins, and comparison table; DIFF is retained honestly |
 | AC-13 overstated evidence | Criterion states are now role-qualified; AC-13 remains unresolved pending AC-10 and complete independent reconciliation |
 
@@ -451,7 +547,7 @@ cargo test --locked --test stage3 deterministic_url_transformation_campaign_neve
 ## Checks not run and residual risks
 
 - `make interop` and exact TypeScript fixture regeneration were not run because
-  no interoperability implementation or fixture changed in this focused task.
+  no interoperability implementation, dependency, fixture, or claim changed.
 - Real-browser execution was not run; `make wasm-check` verifies compilation of
   the changed resolver for `wasm32-unknown-unknown`, while the existing browser
   limitations remain unchanged and explicit above.
@@ -459,8 +555,11 @@ cargo test --locked --test stage3 deterministic_url_transformation_campaign_neve
   benchmarking, live hostile networks, and a multi-browser/device matrix are
   not part of the approved spike.
 - Independent Security Review and fresh QAS are not performed by Developer.
-- AC-10 fallback/provenance validation and AC-13 full reconciliation were not
-  run or implemented because both are explicitly outside this task.
+- Live DNS/TLS/CORS/CDN/outage, rebinding, and slow-stream endpoints were not
+  run because required AC-10 evidence uses deterministic host simulation and
+  no custom network stack was added.
+- AC-13 full reconciliation was not performed because it remains explicitly
+  outside this focused AC-10 task.
 - Browser-origin, JavaScript, extension, service-worker, DNS, TLS, CORS, and
   post-DNS controls remain host trust boundaries.
 - First-use fork protection and durable rollback storage remain application

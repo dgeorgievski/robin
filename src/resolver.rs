@@ -161,7 +161,84 @@ pub struct Evidence {
 #[serde(rename_all = "camelCase")]
 pub struct SourceAttempt {
     pub source_uri: String,
-    pub outcome: String,
+    pub witness_uri: String,
+    pub source_kind: SourceKind,
+    pub source_index: usize,
+    pub attempt_number: u8,
+    pub phase: SourceAttemptPhase,
+    pub outcome: SourceAttemptOutcome,
+    pub locally_verified: bool,
+}
+
+/// Processing boundary reached by one actual source request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum SourceAttemptPhase {
+    Transport,
+    DownloadValidation,
+    LocalMethodVerification,
+}
+
+/// Stable, bounded result of one actual source request.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "category", content = "detail")]
+pub enum SourceAttemptOutcome {
+    TransportRejected(TransportFailureKind),
+    DownloadRejected(DownloadFailureKind),
+    LocalMethodRejected(LocalFailureKind),
+    LocallyVerified,
+}
+
+/// Sanitized transport failure classification retained in attempt provenance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TransportFailureKind {
+    Dns,
+    Tls,
+    Cors,
+    Timeout,
+    HttpStatus(u16),
+    Redirect,
+    TooLarge,
+    Unavailable,
+    DnsRebinding,
+    Truncated,
+    SlowStream,
+}
+
+/// Sanitized host-contract failure classification retained in provenance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum DownloadFailureKind {
+    Incomplete,
+    DeclaredLengthMismatch,
+    LogTooLarge,
+    WitnessTooLarge,
+    CombinedEvidenceTooLarge,
+    MissingResolvedAddresses,
+    DisallowedResolvedAddress,
+}
+
+/// Sanitized local verification failure classification retained in provenance.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LocalFailureKind {
+    UnsupportedMethod,
+    UnsupportedVersion,
+    MalformedInput,
+    ResourceLimit,
+    InvalidScid,
+    InvalidHistory,
+    InvalidProof,
+    InvalidWitness,
+    Deactivated,
+    StaleState,
+    Conflict,
+    MissingRelationship,
+    InvalidKeyMaterial,
+    NetworkUnavailable,
+    SourcesExhausted,
+    SourceConflict,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -281,6 +358,21 @@ pub enum ResolutionError {
     InvalidKeyMaterial(String),
     #[error("network retrieval unavailable or unsafe: {0}")]
     NetworkUnavailable(String),
+    #[error("all configured evidence sources were exhausted")]
+    SourcesExhausted { attempts: Vec<SourceAttempt> },
+    #[error("independent sources returned conflicting valid DID histories")]
+    SourceConflict { attempts: Vec<SourceAttempt> },
+}
+
+impl ResolutionError {
+    /// Ordered provenance for source exhaustion or source disagreement.
+    #[must_use]
+    pub fn source_attempts(&self) -> &[SourceAttempt] {
+        match self {
+            Self::SourcesExhausted { attempts } | Self::SourceConflict { attempts } => attempts,
+            _ => &[],
+        }
+    }
 }
 
 #[async_trait(?Send)]
@@ -372,17 +464,33 @@ impl WebvhResolver {
     ) -> Result<ResolutionOutput, ResolutionError> {
         validate_did_envelope(did)?;
         validate_transport_policy(policy, sources)?;
-        let mut attempts = Vec::new();
-        let mut valid = Vec::new();
         for source in sources {
             validate_source(source)?;
-            for _ in 0..=policy.retries {
+        }
+        let mut attempts = Vec::new();
+        let mut valid = Vec::new();
+        for (source_index, source) in sources.iter().enumerate() {
+            for attempt_index in 0..=policy.retries {
+                let attempt_number = attempt_index + 1;
                 match fetcher
                     .fetch(&source.log_url, &source.witness_url, policy)
                     .await
                 {
                     Ok(downloaded) => {
-                        validate_download(&downloaded, policy)?;
+                        if let Err(error) = validate_download(&downloaded, policy) {
+                            attempts.push(source_attempt(
+                                source,
+                                source_index,
+                                attempt_number,
+                                SourceAttemptPhase::DownloadValidation,
+                                SourceAttemptOutcome::DownloadRejected(error),
+                                false,
+                            ));
+                            // Host-contract failures are deterministic for the
+                            // returned bytes. Do not retry this source; advance
+                            // to the next configured source.
+                            break;
+                        }
                         let input = ResolutionInput {
                             did: did.into(),
                             raw_log: downloaded.raw_log,
@@ -394,37 +502,50 @@ impl WebvhResolver {
                         };
                         match self.resolve(input).await {
                             Ok(output) => {
-                                attempts.push(SourceAttempt {
-                                    source_uri: source.log_url.clone(),
-                                    outcome: "locally verified".into(),
-                                });
+                                attempts.push(source_attempt(
+                                    source,
+                                    source_index,
+                                    attempt_number,
+                                    SourceAttemptPhase::LocalMethodVerification,
+                                    SourceAttemptOutcome::LocallyVerified,
+                                    true,
+                                ));
                                 valid.push(output);
                             }
-                            Err(error) => attempts.push(SourceAttempt {
-                                source_uri: source.log_url.clone(),
-                                outcome: format!("locally rejected: {error}"),
-                            }),
+                            Err(error) => attempts.push(source_attempt(
+                                source,
+                                source_index,
+                                attempt_number,
+                                SourceAttemptPhase::LocalMethodVerification,
+                                SourceAttemptOutcome::LocalMethodRejected(local_failure_kind(
+                                    &error,
+                                )),
+                                false,
+                            )),
                         }
                         break;
                     }
-                    Err(error) => attempts.push(SourceAttempt {
-                        source_uri: source.log_url.clone(),
-                        outcome: format!("transport rejected: {error}"),
-                    }),
+                    Err(error) => attempts.push(source_attempt(
+                        source,
+                        source_index,
+                        attempt_number,
+                        SourceAttemptPhase::Transport,
+                        SourceAttemptOutcome::TransportRejected(error.into()),
+                        false,
+                    )),
                 }
             }
         }
-        let mut accepted = valid.pop().ok_or_else(|| {
-            ResolutionError::NetworkUnavailable("no source produced valid method evidence".into())
-        })?;
-        if valid.iter().any(|candidate| {
+        let mut valid = valid.into_iter();
+        let Some(mut accepted) = valid.next() else {
+            return Err(ResolutionError::SourcesExhausted { attempts });
+        };
+        if valid.any(|candidate| {
             candidate.verified_tip.version_id != accepted.verified_tip.version_id
                 || candidate.verified_tip.history_prefix_sha256
                     != accepted.verified_tip.history_prefix_sha256
         }) {
-            return Err(ResolutionError::Conflict(
-                "independent sources returned conflicting valid DID histories".into(),
-            ));
+            return Err(ResolutionError::SourceConflict { attempts });
         }
         accepted.evidence.source_attempts = attempts;
         Ok(accepted)
@@ -1098,6 +1219,11 @@ fn validate_source(source: &EvidenceSource) -> Result<(), ResolutionError> {
             ));
         }
         validate_remote_domain(authority)?;
+        if authority.eq_ignore_ascii_case("localhost") {
+            return Err(ResolutionError::NetworkUnavailable(
+                "localhost is test-only and forbidden by the Robin source policy".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -1105,36 +1231,97 @@ fn validate_source(source: &EvidenceSource) -> Result<(), ResolutionError> {
 fn validate_download(
     downloaded: &FetchedEvidence,
     policy: &TransportPolicy,
-) -> Result<(), ResolutionError> {
+) -> Result<(), DownloadFailureKind> {
     if !downloaded.complete {
-        return Err(ResolutionError::NetworkUnavailable(
-            "transport returned a partial response".into(),
-        ));
+        return Err(DownloadFailureKind::Incomplete);
     }
-    if downloaded.raw_log.len() > policy.max_response_bytes
-        || downloaded
-            .raw_witnesses
-            .as_ref()
-            .is_some_and(|value| value.len() > MAX_WITNESS_BYTES)
-        || downloaded
-            .content_length
-            .is_some_and(|length| length != downloaded.raw_log.len())
+    if downloaded
+        .content_length
+        .is_some_and(|length| length != downloaded.raw_log.len())
     {
-        return Err(ResolutionError::ResourceLimit(
-            "transport returned evidence beyond or inconsistent with declared bounds".into(),
-        ));
+        return Err(DownloadFailureKind::DeclaredLengthMismatch);
+    }
+    if downloaded.raw_log.len() > policy.max_response_bytes {
+        return Err(DownloadFailureKind::LogTooLarge);
+    }
+    let witness_bytes = downloaded.raw_witnesses.as_ref().map_or(0, String::len);
+    if witness_bytes > MAX_WITNESS_BYTES {
+        return Err(DownloadFailureKind::WitnessTooLarge);
+    }
+    if downloaded
+        .raw_log
+        .len()
+        .checked_add(witness_bytes)
+        .is_none_or(|length| length > MAX_TOTAL_EVIDENCE_BYTES)
+    {
+        return Err(DownloadFailureKind::CombinedEvidenceTooLarge);
     }
     if policy.require_resolved_addresses && downloaded.resolved_addresses.is_empty() {
-        return Err(ResolutionError::NetworkUnavailable(
-            "native host did not expose post-DNS addresses".into(),
-        ));
+        return Err(DownloadFailureKind::MissingResolvedAddresses);
     }
     if downloaded.resolved_addresses.iter().any(disallowed_address) {
-        return Err(ResolutionError::NetworkUnavailable(
-            "post-DNS address is disallowed by Robin transport policy".into(),
-        ));
+        return Err(DownloadFailureKind::DisallowedResolvedAddress);
     }
     Ok(())
+}
+
+fn source_attempt(
+    source: &EvidenceSource,
+    source_index: usize,
+    attempt_number: u8,
+    phase: SourceAttemptPhase,
+    outcome: SourceAttemptOutcome,
+    locally_verified: bool,
+) -> SourceAttempt {
+    SourceAttempt {
+        source_uri: source.log_url.clone(),
+        witness_uri: source.witness_url.clone(),
+        source_kind: source.source_kind.clone(),
+        source_index,
+        attempt_number,
+        phase,
+        outcome,
+        locally_verified,
+    }
+}
+
+impl From<FetchError> for TransportFailureKind {
+    fn from(error: FetchError) -> Self {
+        match error {
+            FetchError::Dns => Self::Dns,
+            FetchError::Tls => Self::Tls,
+            FetchError::Cors => Self::Cors,
+            FetchError::Timeout => Self::Timeout,
+            FetchError::Http(status) => Self::HttpStatus(status),
+            FetchError::Redirect => Self::Redirect,
+            FetchError::TooLarge => Self::TooLarge,
+            FetchError::Unavailable => Self::Unavailable,
+            FetchError::DnsRebinding => Self::DnsRebinding,
+            FetchError::Truncated => Self::Truncated,
+            FetchError::SlowStream => Self::SlowStream,
+        }
+    }
+}
+
+fn local_failure_kind(error: &ResolutionError) -> LocalFailureKind {
+    match error {
+        ResolutionError::UnsupportedMethod(_) => LocalFailureKind::UnsupportedMethod,
+        ResolutionError::UnsupportedVersion(_) => LocalFailureKind::UnsupportedVersion,
+        ResolutionError::MalformedInput(_) => LocalFailureKind::MalformedInput,
+        ResolutionError::ResourceLimit(_) => LocalFailureKind::ResourceLimit,
+        ResolutionError::InvalidScid(_) => LocalFailureKind::InvalidScid,
+        ResolutionError::InvalidHistory(_) => LocalFailureKind::InvalidHistory,
+        ResolutionError::InvalidProof(_) => LocalFailureKind::InvalidProof,
+        ResolutionError::InvalidWitness(_) => LocalFailureKind::InvalidWitness,
+        ResolutionError::Deactivated(_) => LocalFailureKind::Deactivated,
+        ResolutionError::StaleState(_) => LocalFailureKind::StaleState,
+        ResolutionError::Conflict(_) => LocalFailureKind::Conflict,
+        ResolutionError::MissingRelationship(_) => LocalFailureKind::MissingRelationship,
+        ResolutionError::InvalidKeyMaterial(_) => LocalFailureKind::InvalidKeyMaterial,
+        ResolutionError::NetworkUnavailable(_) => LocalFailureKind::NetworkUnavailable,
+        ResolutionError::SourcesExhausted { .. } => LocalFailureKind::SourcesExhausted,
+        ResolutionError::SourceConflict { .. } => LocalFailureKind::SourceConflict,
+    }
 }
 
 fn disallowed_address(address: &IpAddr) -> bool {
