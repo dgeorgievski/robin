@@ -535,7 +535,7 @@ to their immutable commits; the current regression baseline is **83 tests**:
 | AC-8 | PASS | PASS | `5147903814` | `bfdfbca965a27edeb583badb4a578b228b04e96b` |
 | AC-9 | PASS | PASS | `5193259574` | `1abe6a5f14ff1f13d8c867e42327d6a64beb40fd` |
 | AC-10 | PASS | PASS | `5197087919` | `839c146d8fb7d26f7e4fcf23a791c7884ea83397` |
-| AC-11 | PASS | PASS | `5147903814` | `bfdfbca965a27edeb583badb4a578b228b04e96b` |
+| AC-11 | PASS | PASS | `5144888667`; reproduced at `5147903814` | original browser evidence at `c0b962ce040c17c7e960b3118d62b7014af83ffb`; later reproduction at `bfdfbca965a27edeb583badb4a578b228b04e96b` |
 | AC-12 | PASS | PASS | `5147903814` | `bfdfbca965a27edeb583badb4a578b228b04e96b` |
 | AC-13 | Developer evidence reconciliation complete; complete-issue QAS and Security Review pending | Not independently passed | Complete-issue QAS pending | reconciliation baseline `839c146d8fb7d26f7e4fcf23a791c7884ea83397`; final commit is recorded in the Developer checkpoint |
 
@@ -715,20 +715,61 @@ to their immutable commits; the current regression baseline is **83 tests**:
 
 #### AC-11 — Rust/WASM browser feasibility
 
-- **Files/commands:** `src/wasm.rs`, `tests/browser/index.html`, `make
-  wasm-check`, and the historical release/browser harness.
+- **Files:** `src/wasm.rs` and `tests/browser/index.html`.
+- **Original historical build/package command:** independent QAS checkpoint
+  `5144888667` validated commit
+  `c0b962ce040c17c7e960b3118d62b7014af83ffb` with Rustup stable `1.97.1`
+  and `wasm-bindgen-cli` `0.2.126` using exactly:
+
+  ```bash
+  PATH=$HOME/.cargo/bin:$PATH rustup run stable cargo build --locked --release \
+    --target wasm32-unknown-unknown \
+    --features wasm \
+    --no-default-features
+
+  wasm-bindgen \
+    --target web \
+    --out-dir target/browser-release \
+    target/wasm32-unknown-unknown/release/robin_did_resolver_spike.wasm
+  ```
+
+  These are retained historical commands, not commands newly executed by this
+  documentation correction.
+- **Original independent browser evidence:** checkpoint `5144888667`, commit
+  `c0b962ce040c17c7e960b3118d62b7014af83ffb`, recorded raw optimized WASM
+  `2,058,942 bytes`, binding-processed WASM `1,572,445 bytes`, JavaScript binding
+  `14,040 bytes`, and observed localhost WASM transfer `1,572,745 bytes`.
+  HeadlessChrome/Chromium `150` rendered the expected DID and version with zero
+  console errors and zero console warnings, and an independently tampered proof
+  was rejected through the exported WASM boundary. The same run observed
+  reload/navigation at `39 ms`, cached single resolution at approximately
+  `0.6 ms`, and JavaScript heap at approximately `2.49 MB`.
+- **Later independent reproduction:** checkpoint `5147903814` separately
+  validated commit `bfdfbca965a27edeb583badb4a578b228b04e96b`. That rebuild
+  recorded raw WASM `2,108,842 bytes`, processed WASM `1,619,422 bytes`, and
+  JavaScript binding `14,040 bytes`: deltas of `+49,900 bytes` raw,
+  `+46,977 bytes` processed, and `+0 bytes` JavaScript from the original QAS
+  artifacts. It rendered the valid DID/version with zero console errors and
+  zero console warnings and rejected an independently tampered signature. This
+  later rebuild owns those rebuilt byte sizes; it does not replace or
+  retroactively change the original checkpoint's transfer, navigation,
+  cached-resolution, or heap observations.
 - **Current command/result:** `make wasm-check` — PASS for
   `wasm32-unknown-unknown`; this is compilation regression evidence, not a new
-  real-browser run.
-- **Independent result:** PASS at `5147903814`: Rust 1.97.1,
-  `wasm-bindgen-cli` 0.2.126, Headless Chromium 150, valid resolution and
-  tampered-signature rejection, zero console errors/warnings; reproduced raw
-  WASM 2,108,842 bytes, processed WASM 1,619,422 bytes, JavaScript 14,040
-  bytes.
-- **Limit/unsupported capability:** Chromium-only feasibility evidence; WASM
-  cannot protect against malicious JavaScript, extensions, service workers,
-  compromised origin, or host-network policy failure. Broad browser coverage
-  and a production size/performance budget are absent.
+  browser or performance run. AC-11 retains independent PASS; this Developer
+  evidence-ledger correction remains pending focused complete-issue QAS for
+  AC-13.
+- **Limit/unsupported capability:** the evidence covers one desktop Chromium
+  environment. Transfer, timing, and heap measurements are environment-specific
+  observations, not guarantees or approved production startup, memory,
+  bundle-size, or performance budgets. Compressed transfer sizing was not
+  established; `wasm-opt` optimization was not performed; WebKit, Firefox,
+  mobile, and device coverage remain absent. WASM cannot independently protect
+  against malicious JavaScript, extensions, service workers, compromised
+  origins, or host-network policy failure. DNS, TLS, CORS, streaming,
+  cancellation, and origin integrity remain browser-host responsibilities.
+  This evidence does not approve the browser architecture, dependencies,
+  cryptography, production deployment, or final Design.
 
 #### AC-12 — Interoperability
 
@@ -826,7 +867,9 @@ tests. The nonexistent historical name appears only in the correction record.
   evidence are unchanged by this documentation-only reconciliation.
 - Real-browser execution was not rerun because browser/runtime code is
   unchanged; `make wasm-check` freshly verifies the affected final tree. The
-  immutable Chromium evidence remains tied to checkpoint `5147903814`.
+  original immutable browser observations remain tied to checkpoint
+  `5144888667` and commit `c0b962ce...`; the later rebuilt artifact sizes remain
+  separately tied to checkpoint `5147903814` and commit `bfdfbca...`.
 - Live DNS, TLS, CORS, CDN, outage, rebinding, truncation, and slow-stream
   testing was not attempted because the spike uses deterministic host
   simulation and this change adds no network behavior.
