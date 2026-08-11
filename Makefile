@@ -1,4 +1,4 @@
-.PHONY: setup test lint run wasm-check interop
+.PHONY: setup test lint run wasm-check interop lifecycle-interop
 
 setup:
 	rustc --version
@@ -20,3 +20,6 @@ wasm-check:
 
 interop:
 	bash scripts/interop.sh
+
+lifecycle-interop:
+	bash scripts/lifecycle_interop.sh

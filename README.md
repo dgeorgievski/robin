@@ -28,6 +28,10 @@ The non-interactive command set is:
   a temporary directory, builds the independent resolver, and runs the
   reciprocal interoperability check. It requires Node 24, Bun, Corepack, and
   network access on the first run.
+- `make lifecycle-interop` runs the ROB-4 direction-by-direction lifecycle
+  matrix with runtime-only ephemeral keys and writes a public comparison
+  artifact to temporary storage (or `ROB4_INTEROP_ARTIFACT`). It uses the same
+  exact external pins and toolchain as the predecessor harness.
 
 No development server is applicable to this library-only spike. Network failure
 tests use deterministic injected evidence; the core resolver never needs a

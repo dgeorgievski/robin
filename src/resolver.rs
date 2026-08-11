@@ -371,6 +371,8 @@ pub struct ResolutionOutput {
     verified_did_document: Value,
     #[serde(skip)]
     resolved_did: String,
+    #[serde(skip)]
+    verified_method_parameters: Value,
     pub metadata: ResolutionMetadata,
     pub evidence: Evidence,
     pub verified_tip: VerifiedTip,
@@ -715,10 +717,12 @@ impl DidResolver for WebvhResolver {
             .map_err(|error| ResolutionError::InvalidHistory(error.to_string()))?;
         let version_id = metadata.version_id.clone();
         let version_number = metadata.version_number;
+        let verified_method_parameters = history_tip_parameters(&input.raw_log)?;
 
         Ok(ResolutionOutput {
             verified_did_document: did_document,
             resolved_did: input.did,
+            verified_method_parameters,
             metadata: ResolutionMetadata {
                 method: "webvh".into(),
                 method_version: "did:webvh:1.0".into(),
@@ -917,6 +921,15 @@ impl ResolutionOutput {
     #[must_use]
     pub fn did_document_copy(&self) -> Value {
         self.verified_did_document.clone()
+    }
+
+    /// Copy the method-parameter delta retained from the locally verified tip.
+    ///
+    /// This value is detached from the caller-visible raw evidence so later
+    /// evidence mutation cannot alter lifecycle decisions or comparisons.
+    #[must_use]
+    pub fn method_parameters_copy(&self) -> Value {
+        self.verified_method_parameters.clone()
     }
 
     /// Cache context required to prove that a future result extends this tip.
@@ -1611,6 +1624,20 @@ fn history_tip(raw_log: &str) -> Result<(String, u32), ResolutionError> {
     Ok((version_id, number))
 }
 
+fn history_tip_parameters(raw_log: &str) -> Result<Value, ResolutionError> {
+    let line = raw_log
+        .lines()
+        .rfind(|line| !line.trim().is_empty())
+        .ok_or_else(|| ResolutionError::InvalidHistory("missing final entry".into()))?;
+    let value: Value = serde_json::from_str(line)
+        .map_err(|_| ResolutionError::MalformedInput("final entry is not valid JSON".into()))?;
+    value
+        .get("parameters")
+        .filter(|parameters| parameters.is_object())
+        .cloned()
+        .ok_or_else(|| ResolutionError::InvalidHistory("missing final parameters".into()))
+}
+
 fn validate_json_shape(root: &Value) -> Result<(), ResolutionError> {
     let mut stack = vec![(root, 1usize)];
     while let Some((value, depth)) = stack.pop() {
@@ -1885,6 +1912,7 @@ mod tests {
         ResolutionOutput {
             verified_did_document: document,
             resolved_did: did.into(),
+            verified_method_parameters: json!({}),
             metadata: ResolutionMetadata {
                 method: "webvh".into(),
                 method_version: "did:webvh:1.0".into(),

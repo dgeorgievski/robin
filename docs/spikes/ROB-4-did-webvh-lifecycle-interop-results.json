@@ -1,0 +1,438 @@
+{
+  "schema": "robin-rob4-interop-v1",
+  "pins": {
+    "specification": "e426f93e9682bf53952f15b1803f426be5c57fa0",
+    "didwebvhRs": "d3cc50049320445ac49eda2b85b8afb5429434be",
+    "testSuite": "f792ce4568c8c3efb3b6a055a1c2ba963dc00c35",
+    "didwebvhTs": "9b899225b304b27adef009083cd9ff3bc98b1f09"
+  },
+  "operations": 24,
+  "defects": 0,
+  "comparisons": [
+    {
+      "operation": "inception",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "authentication_add",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "authentication_rotate",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "authentication_remove",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "key_agreement_add",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "key_agreement_rotate",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "key_agreement_remove",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "device_add",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "device_remove",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "continuity_replacement",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "prerotation_disable",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "deactivation",
+      "direction": "Robin -> independent",
+      "consumed": true,
+      "byteMatch": null,
+      "semanticMatch": null,
+      "normalizedSemanticMatch": null,
+      "classification": "UNSUPPORTED CAPABILITY",
+      "path": "/didDocument",
+      "robinValue": "not exposed after typed deactivation",
+      "independentValue": "document exposed with deactivated=true"
+    },
+    {
+      "operation": "inception",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "authentication_add",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "authentication_rotate",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "authentication_remove",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "key_agreement_add",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "key_agreement_rotate",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "key_agreement_remove",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "device_add",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "device_remove",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "continuity_replacement",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "prerotation_disable",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": false,
+      "semanticMatch": false,
+      "normalizedSemanticMatch": true,
+      "classification": "SPEC-PERMITTED DIFFERENCE",
+      "path": "/didDocument/service/*/serviceEndpoint",
+      "robinValue": [
+        "https://example.com",
+        "https://example.com/whois.vp"
+      ],
+      "independentValue": [
+        "https://example.com/",
+        "https://example.com/whois.vp"
+      ]
+    },
+    {
+      "operation": "deactivation",
+      "direction": "independent -> Robin",
+      "consumed": true,
+      "byteMatch": null,
+      "semanticMatch": null,
+      "normalizedSemanticMatch": null,
+      "classification": "UNSUPPORTED CAPABILITY",
+      "path": "/didDocument",
+      "robinValue": "not exposed after typed deactivation",
+      "independentValue": "document exposed with deactivated=true"
+    }
+  ],
+  "notes": [
+    "All signing and relationship key material was generated at runtime and retained only in memory.",
+    "Independent versionNumber is derived from the numeric prefix of versionId because the public resolver metadata omits a separate versionNumber field.",
+    "X25519 evidence is relationship selection/profile evidence only, not production DH approval."
+  ]
+}
