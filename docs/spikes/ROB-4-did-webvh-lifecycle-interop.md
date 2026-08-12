@@ -47,7 +47,7 @@ issue #2 canonical report and repository harness; no replacement pin was used.
 | `tests/stage4.rs` | Nine lifecycle/profile/import/relationship/pre-rotation/device/deactivation/continuity/adversarial/comparison tests |
 | `examples/import_lifecycle.rs` | Reads public independent JSONL from stdin and returns only locally verified state or a typed deactivation tip |
 | `scripts/lifecycle_interop.sh` | Fetches/builds exact pins and runs the reciprocal matrix |
-| `scripts/rob4_interop.ts` | Generates independent runtime histories, consumes Robin histories, compares snapshots, and classifies every DIFF |
+| `scripts/rob4_interop.ts` | Generates independent runtime histories, consumes Robin histories, compares snapshots, classifies every DIFF, and includes the focused QAS-1 comparator-scope self-test |
 | `docs/spikes/ROB-4-did-webvh-lifecycle-interop-results.json` | Public, sanitized 24-direction comparison artifact |
 | `Makefile`, `README.md` | Non-interactive `make lifecycle-interop` entry point and usage |
 
@@ -67,8 +67,8 @@ No private fixture is tracked. The #2 report and fixtures are not rewritten.
 | AC-8 deactivation | **PASS** | Both implementations consume each other's deactivation; Robin returns typed terminal tip and no authorized state; append and stale restoration fail | Complete post-deactivation document comparison is separately `UNSUPPORTED CAPABILITY` under AC-11 because Robin intentionally exposes no document |
 | AC-9 method continuity | **PASS** | Precommitted update replacement plus relationship transition verifies in both directions; uncommitted/current-key-only bypass fails | Method-level cryptographic continuity only; no human recovery authorization/custody |
 | AC-10 adversarial lifecycle | **PASS** | Deterministic seed `0x524f422d344c4946`; 16 named invalid transitions plus separate incomplete-import, stale-history, and post-deactivation cases; every case returns a typed error/no state, no panic, bounded sanitized diagnostics | Broad #2 mutation/resource campaigns not repeated |
-| AC-11 reciprocal interop/DIFF | **BLOCKED** | 24 directional consumptions; 22 active snapshots consumed with zero defects and one fully classified slash DIFF each; both deactivations consumed | Robin's fail-closed API intentionally exposes no post-deactivation DID Document, so byte/semantic document comparison is `UNSUPPORTED CAPABILITY`; it is not called reciprocal PASS |
-| AC-12 exact evidence/handoff | **PASS** | This ledger, public JSON artifact, exact pins/commands/counts, dependency delta, private-material scan, limitations, and security-scope assessment | Independent QAS and Security remain pending and separate |
+| AC-11 reciprocal interop/DIFF | **BLOCKED — QAS-1 REMEDIATED; FOCUSED QAS PENDING** | 24 directional consumptions; 22 active snapshots consumed with zero defects and one fully classified slash DIFF each; comparator normalization is now restricted to the implicit `#files` origin-root endpoint and executable negatives reject broader scope; both deactivations consumed | Robin's fail-closed API intentionally exposes no post-deactivation DID Document, so byte/semantic document comparison remains `UNSUPPORTED CAPABILITY`; it is not called reciprocal PASS |
+| AC-12 exact evidence/handoff | **DEVELOPER REMEDIATION COMPLETE — FOCUSED QAS PENDING** | This corrected ledger, public JSON artifact, exact pins/commands/counts, dependency delta, private-material scan, limitations, QAS-1 history, and security-scope assessment | AC-1–AC-10 retain independent QAS PASS; QAS checkpoint `5258547861` failed AC-11/AC-12 only; focused QAS and Security remain pending and separate |
 
 ## Reciprocal matrix
 
@@ -109,8 +109,11 @@ There are 24 direction rows: 22 `SPEC-PERMITTED DIFFERENCE`, 2
   bounded difference.
 - **Security relevance:** no identifier, controller, verification method,
   relationship, version, proof, commitment, or deactivation value changes.
-- **Disposition:** retain byte mismatch, normalize only this exact comparison
-  path for semantic evidence, and do not normalize any security field.
+- **Disposition:** retain byte mismatch. The implementation explicitly locates
+  only the service entry whose ID is the verified DID Document ID plus `#files`,
+  and normalizes only its exact origin-root endpoint from `https://host/` to
+  `https://host`. It does not recursively normalize property names, other
+  services, nested objects, path URLs, or any security/lifecycle field.
 
 This exact DIFF occurs in both directions for all eleven active snapshots (22
 rows). The artifact records both exact values for every row.
@@ -189,6 +192,33 @@ Baseline tool versions were Node 24.4.1, pnpm 11.10.0, Bun 1.3.14,
 The external harness initially failed with exit 2 because top-level `await` was
 not supported by the `tsx` CommonJS output mode. That harness defect was fixed
 with an async entry point; it is not represented as lifecycle evidence.
+
+### Focused QAS-1 remediation evidence
+
+Independent QAS checkpoint `5258547861` found that the original comparator
+recursively removed one trailing slash from every string property named
+`serviceEndpoint`, which exceeded the exact normalization scope described
+above. QAS independently retained PASS for AC-1–AC-10, failed AC-11/AC-12 on
+that evidence-integrity defect, and confirmed that the two post-deactivation
+`UNSUPPORTED CAPABILITY` rows are legitimate and must remain BLOCKED.
+
+The focused Developer correction replaces recursive normalization with explicit
+traversal of `snapshot.didDocument.service`. It selects only the entry whose
+`id` equals `${snapshot.didDocument.id}#files` and removes `/` only when the
+endpoint is exactly an origin root with no path, query, or fragment.
+
+| Command | Exit/result |
+|---|---|
+| `ROB4_COMPARATOR_SCOPE_TEST=1 bun run scripts/rob4_interop.ts` | 0; 4 assertions passed: permitted implicit `#files` root slash normalized; a non-root `#files` path slash, another DID service path slash, and a nested same-named field each remained `IMPLEMENTATION DEFECT` |
+| first fresh exact-Node remediation `make lifecycle-interop` | 2; sandbox DNS could not resolve GitHub; not counted as evidence |
+| `env PATH=/Users/dimitar/.nvm/versions/node/v24.4.1/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin TMPDIR=/private/tmp/rob-4-remediation-interop.yu7AdI ROB4_INTEROP_ARTIFACT=/private/tmp/rob-4-remediation-interop.yu7AdI/rob4-interop-results.json CARGO_TARGET_DIR=/private/tmp/rob-4-remediation-target.PgIyiJ make lifecycle-interop` | 0 with network authorization; selected Stage 4 test: 1 passed, 8 filtered; 24 comparisons; 22 `SPEC-PERMITTED DIFFERENCE`; 2 `UNSUPPORTED CAPABILITY`; 0 defects; 0 ambiguities; 0 unexplained rows; exact original pins and Node 24.4.1/pnpm 11.10.0/Bun 1.3.14 |
+| `shasum -a 256 <regenerated> <tracked>` and `cmp <regenerated> <tracked>` | Both hashes `ca54f8324ab565749a20ecb513410b82cefd4875e54185d7dd53fede7e85e7da`; `cmp` exit 0, so the tracked JSON remains unchanged |
+
+This remediation changes only `scripts/rob4_interop.ts` and this ledger. It
+does not alter lifecycle semantics, the resolver, tests/fixtures, manifests,
+lockfiles, external pins, the deactivation boundary, or the identified
+Security-review scope. Final regression, dependency, secret-scan, commit, and
+publication evidence is recorded in the focused Developer checkpoint.
 
 Final format/test/lint/doc/metadata/Make/WASM/diff/history-scan/push evidence is
 recorded in the immutable Developer handoff checkpoint.

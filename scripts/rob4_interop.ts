@@ -4,6 +4,10 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 async function main(): Promise<void> {
+if (process.env.ROB4_COMPARATOR_SCOPE_TEST === '1') {
+  runComparatorScopeTest();
+  return;
+}
 const repo = process.env.ROB4_REPO_ROOT!;
 const suite = process.env.ROB4_SUITE_DIR!;
 const tsRepo = process.env.ROB4_TS_DIR!;
@@ -96,19 +100,31 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 
-function normalizeServiceSlashes(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(normalizeServiceSlashes);
-  if (value && typeof value === 'object') {
-    const result: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      result[key] =
-        key === 'serviceEndpoint' && typeof child === 'string'
-          ? child.replace(/\/$/, '')
-          : normalizeServiceSlashes(child);
-    }
-    return result;
+function normalizeImplicitFilesServiceRoot(snapshot: unknown): unknown {
+  const normalized = structuredClone(snapshot);
+  if (!normalized || typeof normalized !== 'object') return normalized;
+  const didDocument = (normalized as any).didDocument;
+  if (!didDocument || typeof didDocument !== 'object' || typeof didDocument.id !== 'string') {
+    return normalized;
   }
-  return value;
+  const services = didDocument.service;
+  if (!Array.isArray(services)) return normalized;
+  const filesServiceId = `${didDocument.id}#files`;
+  const filesService = services.find(
+    (service: unknown) =>
+      service && typeof service === 'object' && (service as any).id === filesServiceId,
+  );
+  if (!filesService || typeof filesService.serviceEndpoint !== 'string') return normalized;
+  const endpoint = new URL(filesService.serviceEndpoint);
+  if (
+    filesService.serviceEndpoint === `${endpoint.origin}/` &&
+    endpoint.pathname === '/' &&
+    endpoint.search === '' &&
+    endpoint.hash === ''
+  ) {
+    filesService.serviceEndpoint = endpoint.origin;
+  }
+  return normalized;
 }
 
 function serviceEndpoints(snapshot: any): unknown[] {
@@ -120,7 +136,8 @@ function compare(operation: string, direction: string, robin: any, independent: 
   const byteMatch = JSON.stringify(robin) === JSON.stringify(independent);
   const semanticMatch = canonical(robin) === canonical(independent);
   const normalizedMatch =
-    canonical(normalizeServiceSlashes(robin)) === canonical(normalizeServiceSlashes(independent));
+    canonical(normalizeImplicitFilesServiceRoot(robin)) ===
+    canonical(normalizeImplicitFilesServiceRoot(independent));
   let classification: string | null = null;
   let path: string | null = null;
   if (!byteMatch && semanticMatch) {
@@ -157,6 +174,74 @@ function compare(operation: string, direction: string, robin: any, independent: 
           : independent
       : null,
   };
+}
+
+function runComparatorScopeTest(): void {
+  const base = {
+    didDocument: {
+      id: 'did:webvh:test:example.com',
+      service: [
+        {
+          id: 'did:webvh:test:example.com#files',
+          type: 'relativeRef',
+          serviceEndpoint: 'https://example.com',
+        },
+        {
+          id: 'did:webvh:test:example.com#application',
+          type: 'ExampleService',
+          serviceEndpoint: 'https://other.example/path',
+        },
+      ],
+    },
+    methodParameters: {
+      nested: { serviceEndpoint: 'https://nested.example/path' },
+    },
+  };
+
+  const allowed = structuredClone(base);
+  allowed.didDocument.service[0].serviceEndpoint = 'https://example.com/';
+  const allowedResult = compare('scope_test', 'self-test', base, allowed);
+  if (
+    allowedResult.byteMatch !== false ||
+    allowedResult.normalizedSemanticMatch !== true ||
+    allowedResult.classification !== 'SPEC-PERMITTED DIFFERENCE'
+  ) {
+    throw new Error('implicit #files root slash was not narrowly normalized');
+  }
+
+  const filesPath = structuredClone(base);
+  filesPath.didDocument.service[0].serviceEndpoint = 'https://example.com/path/';
+  const filesPathBase = structuredClone(base);
+  filesPathBase.didDocument.service[0].serviceEndpoint = 'https://example.com/path';
+  const filesPathResult = compare('scope_test', 'self-test', filesPathBase, filesPath);
+  if (
+    filesPathResult.normalizedSemanticMatch !== false ||
+    filesPathResult.classification !== 'IMPLEMENTATION DEFECT'
+  ) {
+    throw new Error('non-root #files endpoint was silently normalized');
+  }
+
+  const otherService = structuredClone(base);
+  otherService.didDocument.service[1].serviceEndpoint = 'https://other.example/path/';
+  const otherServiceResult = compare('scope_test', 'self-test', base, otherService);
+  if (
+    otherServiceResult.normalizedSemanticMatch !== false ||
+    otherServiceResult.classification !== 'IMPLEMENTATION DEFECT'
+  ) {
+    throw new Error('unrelated DID service endpoint was silently normalized');
+  }
+
+  const nested = structuredClone(base);
+  nested.methodParameters.nested.serviceEndpoint = 'https://nested.example/path/';
+  const nestedResult = compare('scope_test', 'self-test', base, nested);
+  if (
+    nestedResult.normalizedSemanticMatch !== false ||
+    nestedResult.classification !== 'IMPLEMENTATION DEFECT'
+  ) {
+    throw new Error('same-named field outside didDocument.service was silently normalized');
+  }
+
+  console.log('ROB-4 comparator scope test: 4 passed; 0 failed');
 }
 
 function tsSnapshot(result: any, log: any[]): any {
