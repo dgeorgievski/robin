@@ -16,6 +16,14 @@ Treat a multi-issue initiative as a Unit of Work delivered through one or more s
 Exit a Bolt on evidence, not elapsed time. If scope or security policy remains unclear, run a discovery spike rather than forcing implementation.
 
 Apply the checkpoint contract from `safe-workflow` to every work-item issue.
+For execution across roles or children, apply its
+[bounded workflow execution contract](../safe-workflow/SKILL.md#bounded-workflow-execution).
+The program coordinator carries the human's authorization into covered child
+handoffs; it cannot authorize new scope itself. Respect each child's accepted
+scope, dependency order, checkpoint ownership, independent reviews, and human
+Product/Design gates. Preparing a program or child issue does not authorize its
+execution, and authorization for one child does not extend to another.
+
 Update the coordination issue with an append-only checkpoint whenever issue
 dependencies, ownership, gate state, or the next executable work item changes.
 The coordination checkpoint must list each issue's latest phase and status,

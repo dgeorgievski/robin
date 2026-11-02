@@ -1,6 +1,7 @@
 # Robin's SAFE harness defaults. User-level authentication and model settings
 # intentionally remain outside the repository.
 approval_policy = "on-request"
+approvals_reviewer = "auto_review"
 sandbox_mode = "workspace-write"
 personality = "pragmatic"
 project_doc_max_bytes = 65536

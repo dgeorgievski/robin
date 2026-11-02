@@ -45,6 +45,130 @@ Codex loads root `AGENTS.md`, discovers repository skills under `.agents/skills/
    started from this repository, verify the skill paths above, and then restart
    the session. Use `/agent` to inspect agent threads during delegated work.
 
+## Automatic approval review
+
+Robin's repository configuration retains the sandbox and interactive escalation
+policy while selecting automatic review for eligible requests:
+
+```toml
+approval_policy = "on-request"
+approvals_reviewer = "auto_review"
+sandbox_mode = "workspace-write"
+```
+
+`auto_review` reduces direct human confirmation by routing eligible escalation
+requests to a reviewer. It does not disable sandboxing, grant repository/network
+authority, expand the accepted task, or bypass managed policy. It is not the
+`never` approval policy. Denied operations must not be bypassed.
+
+See the [official auto-review documentation](https://learn.chatgpt.com/docs/sandboxing/auto-review).
+Effective settings depend on the Codex client/session and managed requirements;
+reload or restart the applicable client when adopting changed configuration.
+Parsing this file does not prove that an active session loaded it or that an
+escalation will be approved. Do not add broad shell/GitHub command rules; any
+future narrow rule needs observed approval noise and separate review.
+
+## Bounded workflow authorization
+
+“Prepare a workflow” authorizes artifacts such as an issue, prompt, or owner
+assignment. “Execute a bounded workflow” authorizes the specified roles and
+correction loops within accepted scope, up to a stated stopping point. A human
+can authorize one role or a complete bounded workflow. A coordinator cannot
+create additional authority by assigning a role or writing a checkpoint.
+
+Carry the human authorization source, issue, accepted scope, included roles,
+allowed corrections/reverification, and stopping point through every handoff.
+Routine waits and session interruptions do not revoke it. A human pause/stop
+requires human direction to resume. Apply the
+[shared execution contract](../.agents/skills/safe-workflow/SKILL.md#bounded-workflow-execution)
+and [repository authorization rules](../AGENTS.md#authorization-for-bounded-safe-workflows).
+
+Within those bounds, the coordinator continues automatically through System
+Architect, the appropriate Construction/evidence owner, independent QAS,
+bounded remediation and focused QAS, required independent Security Review,
+independent reverification, and final System Architect reconciliation. Persist
+and verify each role checkpoint and reconcile its Git target before proceeding.
+Checkpoint failure prevents a completed handoff. Changing role does not require
+repeated human approval, and a focused PASS does not clear outstanding gates.
+
+Developer never substitutes for QAS, Security Reviewer, System Architect, or
+Product Owner. Final ADR acceptance, final identity Design, and final Robin
+Design remain human decisions; System Architect cannot self-approve them.
+Preserve immutable accepted evidence during correction loops. Stop for material
+scope/Product decisions, out-of-authorization architecture/security choices,
+new credentials/privilege, destructive actions outside scope, unresolved
+blockers, and the human's stated stopping conditions.
+
+### Example: execute an accepted scope
+
+```text
+Execute $safe-workflow for issue #N as a bounded workflow within its accepted
+scope.
+
+Proceed from System Architect through the appropriate Construction/evidence
+role, independent QAS, required independent Security Review, in-scope
+remediation and focused reverification, and final System Architect
+reconciliation.
+
+Persist and verify every SAFE checkpoint before each handoff.
+
+Stop at:
+- a material scope or Product-policy decision;
+- an unresolved blocker;
+- final ADR or final Product/Design approval;
+- merge, release, publication, deployment, destructive history change, or issue
+  closure unless explicitly authorized.
+
+Do not ask for repeated role-transition approval while work remains inside this
+bounded authorization.
+```
+
+### GitHub and GitHub Actions
+
+Bounded authorization may cover routine reads, issue comments/checkpoints,
+coordination updates, scoped branch creation/commits/pushes, PR inspection, and
+check/run inspection. PR creation and dispatch of an already-approved
+non-deployment workflow must be explicitly included. Follow tool escalation
+requirements even when the task itself is already authorized.
+
+Those routine actions do not automatically authorize merge, deployment,
+release/publication, issue closure, secrets or environment changes, permission
+changes, or destructive history operations. Keep their explicit human gates.
+Never bypass sandbox denial, repository protection, or GitHub permission failure.
+No ALISS temporary demo policy, reduced testing, browser restriction, or disabled
+CI policy is adopted; Robin's existing Design/security/verification gates remain.
+
+### Issue #5 after the harness PR
+
+Harness maintenance is tracked in #6, separate from identity evidence #5. This
+task stops at an unmerged PR for human review and does not authorize #5 execution.
+#5 currently has no branch and awaits System Architect Design entry. Do not
+advance #5 Construction while the harness PR is pending; avoid creating its
+persistent implementation branch before disposition unless necessary.
+
+Only after the human merges the harness PR, fetch updated `origin/master`,
+record the merge/new master SHA, and reconcile #5 and its latest checkpoint:
+
+- If no #5 branch exists, create its eventual working branch directly from the
+  updated master. Do not manufacture a rebase.
+- If a branch exists, reconcile its name, SHA, baseline, worktree, commits, and
+  accepted independent evidence. Rebase onto updated `origin/master` only for
+  pre-evidence work when no immutable reviewed checkpoint forbids rewriting.
+  Resolve conflicts within #5 scope, rerun affected checks, use the safest
+  permitted push, and checkpoint old/new SHAs and evidence impact. Stop for
+  human/System Architect direction if accepted immutable QAS/Security evidence
+  would be rewritten; never force-push over it without explicit authorization.
+
+In #5's next Design/Construction checkpoint, record:
+
+```text
+Harness baseline includes bounded SAFE workflow orchestration PR at
+master/<merged SHA>.
+```
+
+This reconciliation is not permission to start #5's bounded workflow. Obtain
+the later human execution authorization; do not execute it as part of #6.
+
 ## GitHub issue checkpoints
 
 GitHub Issues are Robin's durable system of record for SAFE work. Create a SAFE
