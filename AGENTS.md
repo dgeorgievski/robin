@@ -102,6 +102,54 @@ Never bypass a sandbox denial, repository protection, or GitHub permission
 failure. Automatic approval review handles eligible escalation requests; it
 does not grant new task authority or override sandbox/managed restrictions.
 
+## Human-controlled Demo gate
+
+`Demo` is an optional human outcome review gate after all required automated/agent
+validation and before `Done` or closure as completed. Each issue/workflow must
+record `Demo gate: required` or `Demo gate: not required` in its issue/checkpoint;
+no custom Project field is needed. An explicit accepted scope or human setting
+takes precedence. Without one, require Demo for user-visible/product behavior,
+architecture/Design evidence needing Product Owner judgment, security/privacy
+outcomes whose accepted workflow includes human outcome review, milestone work,
+and any authorization saying `stop at Demo`. Routine internal maintenance may
+omit Demo when the issue or human authorization explicitly permits direct
+completion after required reviews.
+
+The Coordinator owns routine authorized, evidence-supported transitions:
+`Backlog -> Ready`, `Ready -> In progress`, `In progress -> In review`, and
+`In review -> Demo`. Persist and verify the supporting checkpoint, mutate the
+board, then read back the live item value before continuing. Resolve live project,
+field and option IDs rather than copying IDs from prior sessions. A missing
+required stage is a blocker; do not silently map it to another status.
+
+Enter Demo only after all required role checkpoints are persisted and verified,
+required QAS and Security Review are complete, required System Architect
+reconciliation is complete, unresolved blockers are recorded, and issue-specific
+Demo entry conditions are satisfied. A blocker that prevents a required gate or
+entry condition prevents Demo entry. Record `Next owner: Human / Product Owner`,
+verify the board is in Demo, and STOP. The issue remains OPEN unless the human
+separately authorizes closure. Demo entry is not final Design or release approval.
+
+Every `Demo -> *` decision requires explicit human authorization, persisted
+before the board mutation. The Coordinator may execute the API call after that
+decision; the human need not click the board. Apply these transitions:
+
+- Human accepts outcome: `Demo -> Done`; close with reason `completed` only if
+  closure is included in that authorization or separately authorized.
+- Human requests implementation corrections: `Demo -> In progress`; preserve
+  accepted scope/evidence and repeat affected independent verification.
+- Human requests requirements/Design revision: normally `Demo -> Ready`, or
+  `Backlog` when substantial Product/architecture elaboration is needed.
+- Human has not accepted: remain in `Demo`.
+
+Tests, QAS PASS, Security PASS, System Architect reconciliation, PR creation or
+merge do not authorize `Demo -> Done`. No role, including Coordinator, System
+Architect, QAS, Security or RTE, may infer human acceptance. Bounded workflows
+that stop at Demo include authorized roles and in-scope correction/reverification,
+then automated Demo entry and a stop for human review. This gate adopts no ALISS
+temporary demo policy, reduced tests, Chrome-only testing, disabled CI, or
+clinical/demo-specific behavior; all Robin verification requirements remain.
+
 ## Security & Configuration
 
 Do not commit secrets or local environment files. Provide sanitized examples such as `.env.example`, use least-privilege defaults, and treat changes to authentication, authorization, encryption, or secret lifecycle handling as security-sensitive reviews.

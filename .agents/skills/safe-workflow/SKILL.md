@@ -59,6 +59,8 @@ role change. Do not proceed when checkpoint persistence is unconfirmed.
 | FAIL with an in-scope, bounded correction | Return to Developer or the appropriate implementation owner; correct only the finding, then rerun required independent verification. |
 | BLOCKED | Resolve inside existing authorization if possible; otherwise persist the blocker and stop for human direction. Do not turn missing evidence into PASS. |
 | Scope change / Product decision | Stop for the human when scope materially changes or a material decision is outside existing authorization. |
+| Required Demo entry | After all required gates and issue-specific entry conditions are satisfied, Coordinator persists/verifies the checkpoint, moves `In review -> Demo`, reads back the board value, assigns Human / Product Owner, and stops. |
+| Any exit from Demo | Require an explicit human decision persisted before the board mutation; no role may infer acceptance from verification or merge. |
 | Final Design / merge / release / deploy | Stop for the human unless separately and explicitly authorized; final ADR and Product/Design decisions remain human-owned. |
 
 Preserve independent QAS and required independent Security Review throughout
@@ -70,6 +72,51 @@ name the outstanding gate rather than treating it as waived.
 
 Routine in-scope Git/GitHub actions follow the same authorization bounds and
 enforced tool controls. Never bypass a denial, protection, or permission failure.
+
+## Human-controlled Demo and board ownership
+
+Apply the repository's [Demo contract](../../../AGENTS.md#human-controlled-demo-gate).
+Demo is optional per accepted issue/workflow: record exactly `Demo gate: required`
+or `Demo gate: not required` in the issue/checkpoint, together with entry
+conditions and the authorization source. Do not add a custom Project field for
+this setting. Respect an explicit accepted scope/human setting. Otherwise require
+Demo for user-visible/product behavior, architecture/Design evidence needing
+Product Owner judgment, security/privacy outcomes whose accepted workflow
+includes human outcome review, milestone work, and explicit `stop at Demo`
+authorization. Routine internal maintenance may omit Demo when explicitly allowed
+to complete after required reviews.
+
+Coordinator owns authorized evidence-supported transitions `Backlog -> Ready`,
+`Ready -> In progress`, `In progress -> In review`, `In review -> Demo`. Query live
+project/field/option IDs; persist and verify each supporting checkpoint before
+mutation, then read back the item value before continuing. A missing required
+stage blocks the transition; do not substitute another status.
+
+For `stop at Demo`, orchestrate all included roles, persist/verify every checkpoint,
+and complete in-scope remediation plus affected independent reverification.
+Enter Demo only after required QAS, Security Review, System Architect reconciliation
+and all other required roles/entry conditions are complete. Record unresolved
+blockers; those preventing a required gate/entry condition prevent entry. Persist
+the entry checkpoint, move from In review to Demo, verify readback, set
+`Next owner: Human / Product Owner`, and STOP. Keep the issue OPEN; no final Design
+or release approval is implied.
+
+Never automatically exit Demo. Every `Demo -> *` requires an explicit human
+decision persisted before the Coordinator executes the board mutation:
+
+| Human decision | Authorized transition / follow-up |
+|---|---|
+| Accept outcome | `Demo -> Done`; close with reason `completed` only when closure is included or separately authorized. |
+| Request implementation corrections | `Demo -> In progress`; preserve accepted scope/prior evidence, assign appropriate Developer/evidence owner, repeat affected independent reviews. |
+| Request requirements/Design revision | Normally `Demo -> Ready`, or `Backlog` for substantial Product/architecture elaboration. |
+| No acceptance yet | Stay in `Demo`. |
+
+Decision authority is human-only; API execution may be Coordinator-owned after
+authorization. Tests, QAS/Security PASS, System Architect reconciliation, PR
+creation or merge never authorize `Demo -> Done`. No Coordinator, System
+Architect, QAS, Security or RTE may infer human acceptance. No ALISS temporary
+demo policy, reduced tests, Chrome-only testing, disabled CI or clinical/demo
+behavior is adopted.
 
 ## 3. Reconcile immutable Git scope
 
@@ -163,6 +210,8 @@ Then include:
 - role and status;
 - branch and relevant commit SHA(s), or `not created` with a reason;
 - scope and acceptance-criterion state;
+- `Demo gate: required` or `Demo gate: not required`, its authorization/default,
+  issue-specific entry conditions, board state/readback and any human exit decision;
 - exact validation evidence;
 - findings, failures, and checks not run;
 - blockers and residual risks;
