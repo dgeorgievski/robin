@@ -24,6 +24,18 @@ scope, dependency order, checkpoint ownership, independent reviews, and human
 Product/Design gates. Preparing a program or child issue does not authorize its
 execution, and authorization for one child does not extend to another.
 
+## Coordinator Project Status ownership
+
+Apply [safe-workflow's shared Status contract](../safe-workflow/SKILL.md#coordinator-project-status-ownership)
+to each child and the coordination issue at every handoff and role start:
+checkpoint -> board update -> verification -> next role. Coordinator owns the
+external writes; read-only specialists return result/evidence/next owner/action.
+Carry current/intended Project Status and next owner/action in checkpoints and
+verify live IDs/readbacks. Determine each item's Status from its own next activity;
+a parent rollup or child's completion does not advance another issue. Preserve
+child dependencies, bounded authority and human-only Demo exits. Failed board
+synchronization blocks that handoff; record the blocker in the rollup as well.
+
 Update the coordination issue with an append-only checkpoint whenever issue
 dependencies, ownership, gate state, or the next executable work item changes.
 The coordination checkpoint must list each issue's latest phase and status,
