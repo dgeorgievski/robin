@@ -113,6 +113,7 @@ reconciliation.
 Persist and verify every SAFE checkpoint before each handoff.
 
 Stop at:
+- Demo after all required gates and verified board entry;
 - a material scope or Product-policy decision;
 - an unresolved blocker;
 - final ADR or final Product/Design approval;
@@ -122,6 +123,80 @@ Stop at:
 Do not ask for repeated role-transition approval while work remains inside this
 bounded authorization.
 ```
+
+### Human-controlled Demo workflow
+
+Robin [Project #3](https://github.com/users/dgeorgievski/projects/3) uses:
+
+```text
+Backlog -> Ready -> In progress -> In review -> Demo -> Done
+```
+
+Demo is an optional human review gate after all required automated/agent validation
+and before Done or closure as completed. The issue/checkpoint establishes
+`Demo gate: required` or `Demo gate: not required`, the authorization/default and
+issue-specific entry conditions. No new custom Project field is needed. An
+explicit accepted scope or human setting takes precedence. Without one, Demo is
+required for user-visible/product behavior, architecture/Design evidence needing
+Product Owner judgment, security/privacy-sensitive outcomes where the accepted
+workflow includes human outcome review, milestone work, and explicit `stop at Demo`
+workflows. Routine internal maintenance may omit Demo when the issue or human
+explicitly permits direct completion after required reviews.
+
+Coordinator owns routine authorized, evidence-supported `Backlog -> Ready`,
+`Ready -> In progress`, `In progress -> In review` and `In review -> Demo`
+transitions. Persist and verify the supporting checkpoint, resolve live project,
+field and option IDs, mutate the item, and read back its board value before
+continuing. Do not reuse historical IDs or silently substitute another status
+when a required stage is missing.
+
+For technical completion, enter Demo only after all required role checkpoints are
+persisted and verified, required QAS and Security Review have completed, required
+System Architect reconciliation has completed, unresolved blockers are recorded,
+and issue-specific Demo entry conditions are satisfied. A blocker preventing a
+required gate or entry condition prevents entry. Then verify `In review -> Demo`,
+record `Next owner: Human / Product Owner`, and STOP. The issue remains OPEN
+unless the human separately authorizes closure. Entry implies neither final
+Design approval nor release readiness.
+
+Every exit from Demo requires an explicit human decision, persisted before the
+board mutation. The Coordinator may execute that decision via API; human-only
+refers to decision authority, not who clicks or calls GitHub.
+
+| Human outcome decision | Board transition and subsequent authority |
+|---|---|
+| Accept | `Demo -> Done`; close as `completed` only when closure is included in that authorization or separately authorized. |
+| Implementation corrections | `Demo -> In progress`; preserve accepted scope/evidence, use appropriate Developer/evidence owner and repeat affected independent verification. |
+| Requirements/Design revision | Normally `Demo -> Ready`, or `Backlog` if substantial Product/architecture elaboration is needed. |
+| Not accepted yet | Remain in `Demo`; no inferred completion. |
+
+Green tests, QAS PASS, Security PASS, System Architect reconciliation, PR creation
+or PR merge do not authorize Demo -> Done. No role, including Coordinator, System
+Architect, QAS, Security or RTE, may infer human Demo acceptance. Only the
+human-controlled gate concept is borrowed from ALISS; no temporary demo policy,
+reduced tests, Chrome-only testing, disabled CI or clinical/demo-specific behavior
+is adopted.
+
+For example:
+
+```text
+Execute $safe-workflow for issue #N through Developer, QAS,
+Security Review and System Architect reconciliation.
+Stop at Demo.
+```
+
+This authorizes automatic orchestration of the included roles, persisted/verified
+checkpoints and in-scope remediation/reverification. Once all required gates and
+entry conditions pass, Coordinator moves the item to Demo, verifies readback and
+stops for Human / Product Owner review. It authorizes no automatic exit, closure,
+merge, deployment or release action.
+
+On 2026-11-03 authenticated GraphQL reconciliation found five Status options;
+adding Demo before Done and rereading verified the exact six-option order above,
+preserved prior option IDs/metadata and unrelated fields, and left #5 OPEN in
+Backlog. This is observed configuration, not proof of a deployed transition
+validator. Enforcement here is the issue/checkpoint and coordinator contract;
+GitHub edit permissions alone do not enforce human decision authority.
 
 ### GitHub and GitHub Actions
 
@@ -138,36 +213,25 @@ Never bypass sandbox denial, repository protection, or GitHub permission failure
 No ALISS temporary demo policy, reduced testing, browser restriction, or disabled
 CI policy is adopted; Robin's existing Design/security/verification gates remain.
 
-### Issue #5 after the harness PR
+### Issue #5 baseline and Demo reconciliation
 
-Harness maintenance is tracked in #6, separate from identity evidence #5. This
-task stops at an unmerged PR for human review and does not authorize #5 execution.
-#5 currently has no branch and awaits System Architect Design entry. Do not
-advance #5 Construction while the harness PR is pending; avoid creating its
-persistent implementation branch before disposition unless necessary.
+The human merged harness PR #7 at master/6ba83193c53191988b7e2d035a354cb373573869.
+Issue #5 subsequently received Design-entry checkpoint 6614831925 and has a
+separate `ROB-5-witness-first-use-assurance` branch with unfinished uncommitted
+work. The earlier instruction to wait for the harness merge is satisfied; do not
+use its historical “no branch” state as current evidence. Read #5 and all current
+checkpoints before resuming; reconcile actual Git/snapshot state and preserve
+immutable #2/#4 predecessor evidence. Do not rebase or rewrite accepted evidence.
 
-Only after the human merges the harness PR, fetch updated `origin/master`,
-record the merge/new master SHA, and reconcile #5 and its latest checkpoint:
-
-- If no #5 branch exists, create its eventual working branch directly from the
-  updated master. Do not manufacture a rebase.
-- If a branch exists, reconcile its name, SHA, baseline, worktree, commits, and
-  accepted independent evidence. Rebase onto updated `origin/master` only for
-  pre-evidence work when no immutable reviewed checkpoint forbids rewriting.
-  Resolve conflicts within #5 scope, rerun affected checks, use the safest
-  permitted push, and checkpoint old/new SHAs and evidence impact. Stop for
-  human/System Architect direction if accepted immutable QAS/Security evidence
-  would be rewritten; never force-push over it without explicit authorization.
-
-In #5's next Design/Construction checkpoint, record:
-
-```text
-Harness baseline includes bounded SAFE workflow orchestration PR at
-master/<merged SHA>.
-```
-
-This reconciliation is not permission to start #5's bounded workflow. Obtain
-the later human execution authorization; do not execute it as part of #6.
+`Demo gate: required` applies to #5 because its bounded workflow explicitly stops
+at Demo. Creating the option resolves only the missing-board-stage blocker.
+The separate writer-ownership/stable-snapshot blocker remains until independently
+resolved. Incomplete implementation, QAS, Security/Privacy and System Architect
+reconciliation remain incomplete; no premature Demo movement. Once all required
+gates and issue-specific entry conditions are met, Coordinator moves #5 from
+In review to Demo and stops, leaving it OPEN for human outcome review. This
+maintenance does not execute #5's evidence workflow or approve production/final
+Design, and its PR authority does not relax #5's no-commit/push/PR restriction.
 
 ## GitHub issue checkpoints
 

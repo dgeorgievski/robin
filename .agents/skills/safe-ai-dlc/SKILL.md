@@ -34,3 +34,13 @@ Do not start an issue whose latest checkpoint says it is blocked. Do not infer
 completion from a closed issue, merged branch, or green check alone; require the
 expected role checkpoint and evidence. If multiple agents could update the same
 issue concurrently, assign one checkpoint owner before work begins.
+
+For each child and the coordination issue, carry `Demo gate: required` or
+`Demo gate: not required` and its accepted entry conditions in checkpoints. Apply
+[safe-workflow's human-controlled Demo contract](../safe-workflow/SKILL.md#human-controlled-demo-and-board-ownership):
+Coordinator may enter Demo after required gates and verified board updates, then
+stops with Human / Product Owner next. Every exit from Demo requires an explicit
+persisted human decision, even when a parent rollup, green checks or merged PR
+suggests completion. Acceptance of one child does not accept another; closure
+requires its own included or separate authorization. No program role can infer
+human acceptance or reduce Robin validation requirements.
