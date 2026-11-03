@@ -87,8 +87,9 @@ Within those bounds, the coordinator continues automatically through System
 Architect, the appropriate Construction/evidence owner, independent QAS,
 bounded remediation and focused QAS, required independent Security Review,
 independent reverification, and final System Architect reconciliation. Persist
-and verify each role checkpoint and reconcile its Git target before proceeding.
-Checkpoint failure prevents a completed handoff. Changing role does not require
+and verify each role checkpoint, reconcile its Git target, then update and verify
+Project Status before starting the next role. Checkpoint or board verification
+failure prevents a completed handoff. Changing role does not require
 repeated human approval, and a focused PASS does not clear outstanding gates.
 
 Developer never substitutes for QAS, Security Reviewer, System Architect, or
@@ -110,7 +111,7 @@ role, independent QAS, required independent Security Review, in-scope
 remediation and focused reverification, and final System Architect
 reconciliation.
 
-Persist and verify every SAFE checkpoint before each handoff.
+Persist/verify checkpoint -> update Project Status -> verify readback -> next role.
 
 Stop at:
 - Demo after all required gates and verified board entry;
@@ -123,6 +124,30 @@ Stop at:
 Do not ask for repeated role-transition approval while work remains inside this
 bounded authorization.
 ```
+
+### Coordinator Project Status ownership
+
+Use the [shared handoff contract](../.agents/skills/safe-workflow/SKILL.md#coordinator-project-status-ownership)
+for every specialist completion/start, including read-only reviews. Coordinator
+persists/verifies the result, determines the next activity, resolves live Project
+#3 and issue/item/Status/option metadata, updates Status, re-reads and verifies,
+then starts/assigns the next authorized role. Checkpoints record current/intended
+Status and next owner/action; append the verified transition confirmation.
+Failures block handoff while preserving evidence. Reconcile concurrent edits;
+never blindly overwrite them or broaden permissions after denial.
+
+Backlog means not executable; Ready means executable but waiting. Active Design,
+implementation and remediation use In progress. Independent QAS, Security and
+final Architect reconciliation stay In review until technical gates complete;
+implementation findings return to In progress. Ready can follow completed Design,
+and authorized active Design can begin directly from Backlog. BLOCKED retains
+the phase of the blocker. Demo/Done retain the human gates below.
+
+This session's GitHub connector exposes no Project operations; authenticated
+`gh api graphql` provides live metadata/readback where already authorized.
+Tool availability is surface-specific; do not infer API capability from UI
+listings. These instructions define Coordinator enforcement, not a deployed
+GitHub transition validator.
 
 ### Human-controlled Demo workflow
 
@@ -197,6 +222,15 @@ preserved prior option IDs/metadata and unrelated fields, and left #5 OPEN in
 Backlog. This is observed configuration, not proof of a deployed transition
 validator. Enforcement here is the issue/checkpoint and coordinator contract;
 GitHub edit permissions alone do not enforce human decision authority.
+
+A subsequent 2026-11-03 handoff reconciliation verified all six options and
+found #5 already In progress under its Developer-remediation checkpoint. #1's
+latest Design-evidence checkpoint still said IN PROGRESS while its board item
+was Backlog; Coordinator persisted reconciliation before correcting it to
+In progress and verified live readback. Maintenance #10 appeared on the board
+in Backlog between creation and lookup; the stale-state guard stopped before
+mutation, then a fresh checkpoint/live-state reconciliation permitted correction.
+Always re-resolve actual item state rather than assuming new issues are absent.
 
 ### GitHub and GitHub Actions
 
@@ -274,7 +308,8 @@ Before making changes, the resuming agent:
 Git state and fresh command output override stale checkpoint prose. If GitHub is
 unavailable or comment writes fail, the agent returns a complete ready-to-post
 checkpoint and marks persistence BLOCKED. A role may not claim its handoff until
-the checkpoint comment is recorded.
+the checkpoint is verified and Coordinator Project Status synchronization/readback
+is verified before the next role starts.
 
 ## First workflow: one ticket
 

@@ -74,8 +74,8 @@ Security Review remain independent. System Architect cannot self-approve final
 Design. Corrections must preserve accepted immutable evidence and checkpoints.
 
 At every completed role, persist its checkpoint, verify the write, reconcile
-branch/commit/evidence, then continue to the next authorized role. Do not claim a
-completed handoff when checkpoint persistence failed.
+branch/commit/evidence, synchronize and verify Project Status, then continue to
+the next authorized role. A failed checkpoint or board readback blocks handoff.
 
 When covered by the bounded authorization, routine actions need no repeated
 task authorization: repository reads; Git status/diff/log/show/fetch; creating
@@ -101,6 +101,29 @@ Stop and ask for human direction at:
 Never bypass a sandbox denial, repository protection, or GitHub permission
 failure. Automatic approval review handles eligible escalation requests; it
 does not grant new task authority or override sandbox/managed restrictions.
+
+## Coordinator Project Status ownership
+
+Apply the shared [safe-workflow contract](.agents/skills/safe-workflow/SKILL.md#coordinator-project-status-ownership)
+at every handoff: persist checkpoint -> verify persistence -> determine next
+activity/owner -> update live Robin Project #3 Status -> re-read/verify -> start
+or assign the next role. Coordinator owns mutations, including for read-only
+specialists. Resolve live project/item/field/option IDs by repository and issue
+number/URL; add missing tracked issues, never match titles alone. Record
+`Current Project Status:`, `Intended Project Status:`, `Next Owner:` and
+`Next Action:` plus a subsequent verified transition confirmation.
+
+Use Backlog for non-executable work, Ready for executable waiting work,
+In progress for active Design/implementation/remediation, In review for independent
+validation/reconciliation, Demo for fully gated human outcome review and Done
+only after required acceptance. Active authorized Design can start directly from
+Backlog; accepted Design can return to Ready; review findings requiring repair
+return to In progress. Keep successive reviews in In review. BLOCKED retains its
+phase and records the blocker; missing options or failed persistence/update/readback
+block handoff. Reconcile concurrent changes rather than blindly overwriting them.
+Routine transitions within bounded authority need no repeated human permission.
+Every Demo exit still requires an explicit persisted human decision; closure is
+separate. Do not claim handoff complete until checkpoint and board are verified.
 
 ## Human-controlled Demo gate
 

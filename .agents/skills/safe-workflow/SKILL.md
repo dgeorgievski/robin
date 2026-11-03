@@ -50,8 +50,10 @@ interruptions do not revoke it; an explicit human pause requires human resumptio
 
 Under an active bounded authorization, automatically transition through covered
 roles after persisting and verifying each role checkpoint and reconciling its
-branch, commit, and evidence. Do not request repeated confirmation solely for a
-role change. Do not proceed when checkpoint persistence is unconfirmed.
+branch, commit, and evidence, then synchronizing and verifying Project Status
+under the contract below before starting/assigning the next role. Do not request
+repeated confirmation solely for a role change or its routine board transition.
+Do not proceed when checkpoint persistence or board verification is unconfirmed.
 
 | Result/event | Next action within the recorded authorization |
 |---|---|
@@ -86,12 +88,6 @@ includes human outcome review, milestone work, and explicit `stop at Demo`
 authorization. Routine internal maintenance may omit Demo when explicitly allowed
 to complete after required reviews.
 
-Coordinator owns authorized evidence-supported transitions `Backlog -> Ready`,
-`Ready -> In progress`, `In progress -> In review`, `In review -> Demo`. Query live
-project/field/option IDs; persist and verify each supporting checkpoint before
-mutation, then read back the item value before continuing. A missing required
-stage blocks the transition; do not substitute another status.
-
 For `stop at Demo`, orchestrate all included roles, persist/verify every checkpoint,
 and complete in-scope remediation plus affected independent reverification.
 Enter Demo only after required QAS, Security Review, System Architect reconciliation
@@ -117,6 +113,85 @@ creation or merge never authorize `Demo -> Done`. No Coordinator, System
 Architect, QAS, Security or RTE may infer human acceptance. No ALISS temporary
 demo policy, reduced tests, Chrome-only testing, disabled CI or clinical/demo
 behavior is adopted.
+
+## Coordinator Project Status ownership
+
+A SAFE handoff is complete only in this order:
+
+1. Obtain the outgoing specialist's result, evidence, next owner and next action.
+2. Persist the role checkpoint and re-read it to verify persistence; reconcile Git/evidence.
+3. Determine the actual next authorized activity and owner.
+4. Resolve live Robin [Project #3](https://github.com/users/dgeorgievski/projects/3)
+   by owner/number and verify its identity. Resolve the issue by repository
+   `dgeorgievski/robin` plus number/URL, never title alone, and its project item ID.
+   Add the issue if absent when accepted tracking requires it. Paginate reads
+   until the required issue, item and metadata are found or absence is established.
+5. Resolve the live `Status` field and target option by exact name, then update
+   the item. Never hardcode or reuse historical project, field, item or option IDs.
+6. Query the item again and verify the expected Status and issue identity. If
+   already correct, verify and record that readback without a redundant write.
+7. Append a Coordinator confirmation with `Project transition verified: <before>
+   -> <after>` and `Next owner: <role>`; only then start/assign the next agent.
+
+The Coordinator owns external mutations and checkpoint persistence for read-only
+specialists, including QAS, Security Reviewer and System Architect. Specialists
+return result/evidence/next owner/action; do not make them mutate the board.
+Apply this contract at role completion, role start, remediation and resume. When
+Ready represents a waiting role, verify Ready before assignment, then persist
+and verify the start checkpoint and In progress before active work begins.
+Covered role transitions and their routine board updates require no renewed
+human authorization inside an existing bounded workflow.
+
+Select Status by next activity, not outgoing role:
+
+| Next activity / event | Status |
+|---|---|
+| Not executable: unresolved requirements/decisions, predecessor or Design authorization missing, no authorized next role | Backlog |
+| Entry gates satisfied; executable specialist waiting, including accepted Design handed to Developer before start | Ready |
+| Active System Architect Design, implementation, evidence construction or remediation | In progress |
+| Accepted immutable Git or content-addressed review target; independent QAS, Security, final Architect reconciliation or required PR review active | In review |
+| All required technical gates and persisted evidence complete; required human outcome review next | Demo; verify, assign Human / Product Owner, STOP; leave OPEN |
+| All required gates including required human acceptance satisfied | Done only under applicable authorization; closure remains separate |
+
+Authorized active Design may move `Backlog -> In progress`. Accepted Design
+waiting for Developer may move `In progress -> Ready`; Developer start moves
+`Ready -> In progress`. Developer handoff to QAS moves `In progress -> In review`.
+Keep `In review` through QAS PASS -> Security -> final Architect reconciliation;
+role changes alone do not bounce Status. Findings requiring code/evidence repair
+move `In review -> In progress`, followed by new independent verification.
+BLOCKED is a checkpoint verdict, not a new Status: retain the phase where the
+blocker occurred and record its exact disposition. Never leave active work in
+Backlog or infer technical completion from tests, a merged PR or a closed child.
+
+The lifecycle is `Backlog -> Ready -> In progress -> In review -> Demo -> Done`.
+Verify all six live option names; a missing required option (especially Demo)
+is a configuration blocker, never permission to substitute In review or Done.
+Apply the human-controlled Demo contract above to every `Demo -> *`, including
+corrections/redesign. This matrix cannot authorize a Demo exit or issue closure.
+
+Every role-completion checkpoint includes `Current Project Status:`,
+`Intended Project Status:`, `Next Owner:` and `Next Action:`. Current means observed
+live state; intended means the evidence-supported next activity, not a claimed
+successful mutation. Preserve the supporting checkpoint before any board write.
+If checkpoint persistence is unavailable, return the ready-to-post checkpoint
+and stop the handoff. If the checkpoint persists but the board operation fails,
+preserve specialist evidence and report:
+
+```text
+CHECKPOINT: persisted
+PROJECT STATUS UPDATE: BLOCKED
+CURRENT STATUS: <actual, or unavailable with reason>
+INTENDED STATUS: <expected>
+NEXT OWNER: <role>
+BLOCKER: <exact permission/tool/API error, with sensitive values redacted>
+```
+
+Persist the blocker when possible. Do not claim handoff complete or start the next
+role until resolved. Do not request new credentials or broaden privileges to
+work around a denial. If readback differs or concurrent changes appear, re-read
+latest checkpoints and live state; reconcile or report the conflict rather than
+blindly overwriting a human/Coordinator change. Retain immutable evidence and
+human decisions. Board repair alone does not authorize specialist execution.
 
 ## 3. Reconcile immutable Git scope
 
@@ -215,7 +290,8 @@ Then include:
 - exact validation evidence;
 - findings, failures, and checks not run;
 - blockers and residual risks;
-- one concrete next owner/action;
+- `Current Project Status:`, `Intended Project Status:`, `Next Owner:` and
+  `Next Action:`; include verified readback in a subsequent Coordinator confirmation;
 - expected exit state.
 
 Append a checkpoint:
@@ -227,7 +303,10 @@ Append a checkpoint:
 - at Developer handoff;
 - at QAS verdict.
 
-If checkpoint persistence fails, return a complete ready-to-post block and mark persistence BLOCKED. Do not claim the handoff is complete until the checkpoint is recorded.
+If checkpoint persistence fails, return a complete ready-to-post block and mark
+persistence BLOCKED. Do not claim the handoff is complete until the checkpoint is
+recorded and Project Status synchronization/readback is verified under the shared
+contract.
 
 ## 9. Role handoff requirements
 
