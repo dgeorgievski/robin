@@ -25,9 +25,51 @@ Do not rewrite an older checkpoint to represent new state.
 - **System Architect:** reviews architecture, trust boundaries, constraints, and evidence gates.
 - **Developer:** implements the smallest focused change and records exact evidence.
 - **QAS:** independently validates the immutable diff and does not repair it.
+- **Security Reviewer:** independently reviews required security boundaries and remediation.
 - **RTE:** prepares the human-reviewed release handoff only after all required gates pass.
 
 Do not collapse Developer and QAS for security-sensitive work. Human approval remains required for ambiguous requirements, credentials, destructive operations, production changes, publishing, and final merge.
+
+## Bounded workflow execution
+
+The latest valid human authorization may cover one role or multiple SAFE gates.
+At start/resume, reconcile it with the active conversation and record in each
+checkpoint and handoff:
+
+- authorization source;
+- issue or Unit of Work;
+- accepted scope;
+- included roles or named workflow;
+- allowed correction/reverification loops;
+- stopping condition.
+
+Apply the repository's [bounded authorization contract](../../../AGENTS.md#authorization-for-bounded-safe-workflows).
+Preparation of issues/prompts/owners alone does not authorize execution.
+Checkpoints preserve authority; they never expand it. Routine waits or session
+interruptions do not revoke it; an explicit human pause requires human resumption.
+
+Under an active bounded authorization, automatically transition through covered
+roles after persisting and verifying each role checkpoint and reconciling its
+branch, commit, and evidence. Do not request repeated confirmation solely for a
+role change. Do not proceed when checkpoint persistence is unconfirmed.
+
+| Result/event | Next action within the recorded authorization |
+|---|---|
+| PASS | Continue to the next included role; a focused PASS does not clear other outstanding criteria or gates. |
+| FAIL with an in-scope, bounded correction | Return to Developer or the appropriate implementation owner; correct only the finding, then rerun required independent verification. |
+| BLOCKED | Resolve inside existing authorization if possible; otherwise persist the blocker and stop for human direction. Do not turn missing evidence into PASS. |
+| Scope change / Product decision | Stop for the human when scope materially changes or a material decision is outside existing authorization. |
+| Final Design / merge / release / deploy | Stop for the human unless separately and explicitly authorized; final ADR and Product/Design decisions remain human-owned. |
+
+Preserve independent QAS and required independent Security Review throughout
+correction loops. Developer cannot substitute for either reviewer, System
+Architect, or Product Owner; System Architect cannot self-approve final Design.
+Produce new focused commits/evidence for corrections without rewriting accepted
+immutable evidence. Stop at the recorded boundary even if more roles are needed;
+name the outstanding gate rather than treating it as waived.
+
+Routine in-scope Git/GitHub actions follow the same authorization bounds and
+enforced tool controls. Never bypass a denial, protection, or permission failure.
 
 ## 3. Reconcile immutable Git scope
 

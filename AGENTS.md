@@ -47,6 +47,61 @@ GitHub is unavailable or issue-comment writes are not authorized, return a
 ready-to-post checkpoint and mark persistence BLOCKED. Long-running or
 multi-agent SAFE work must have a GitHub issue before implementation begins.
 
+## Authorization for bounded SAFE workflows
+
+Preparation and execution are separate. Creating an issue, drafting a prompt,
+assigning `Owner` or `NextRole`, or updating coordination metadata authorizes
+those artifacts only unless execution is explicitly included.
+
+The human may authorize one SAFE role or an entire bounded workflow. Identify
+the authorization source, issue or Unit of Work, accepted scope, included roles
+or named workflow, allowed correction/reverification loops, and stopping point
+from the human request and active conversation. Clarify material ambiguity before
+dependent work; a coordinator or checkpoint cannot create or expand authority.
+
+Once a bounded workflow is authorized, carry those bounds in checkpoints and
+handoffs. Do not ask again merely because `NextRole` changes. Routine tool waits
+and session interruptions do not revoke authorization; an explicit human pause
+or stop requires human direction to resume.
+
+Within the authorized scope, the coordinator may progress through System
+Architect, Developer or the appropriate evidence owner, independent QAS,
+in-scope remediation, focused QAS, required independent Security Review,
+correction/reverification, and final System Architect reconciliation. This is
+orchestration, not permission to collapse roles: Developer cannot substitute for
+QAS, Security Reviewer, System Architect, or Product Owner. QAS and required
+Security Review remain independent. System Architect cannot self-approve final
+Design. Corrections must preserve accepted immutable evidence and checkpoints.
+
+At every completed role, persist its checkpoint, verify the write, reconcile
+branch/commit/evidence, then continue to the next authorized role. Do not claim a
+completed handoff when checkpoint persistence failed.
+
+When covered by the bounded authorization, routine actions need no repeated
+task authorization: repository reads; Git status/diff/log/show/fetch; creating
+the issue-specific branch; scoped commits and pushes to the authorized branch;
+approved build/test/lint commands; GitHub issue/PR/check/run reads; checkpoints
+and routine coordination updates. PR creation or non-deployment workflow
+dispatch must be explicitly included. Tool and sandbox enforcement still apply;
+use the required escalation path rather than treating task authorization as
+execution permission. Do not add broad shell or GitHub command allow rules.
+
+Stop and ask for human direction at:
+
+- material scope changes or materially ambiguous Product requirements;
+- architectural/security choices outside existing authorization;
+- required credentials/secrets or new privileged access;
+- destructive operations outside scope or proposed history rewrite/force-push
+  over accepted evidence;
+- production deployment, or release/publication without explicit authorization;
+- final ADR acceptance, final identity Design, or final Robin Design approval;
+- merge to `master` or issue closure without explicit authorization;
+- an unresolved blocker that prevents safe progress, or a human pause/stop.
+
+Never bypass a sandbox denial, repository protection, or GitHub permission
+failure. Automatic approval review handles eligible escalation requests; it
+does not grant new task authority or override sandbox/managed restrictions.
+
 ## Security & Configuration
 
 Do not commit secrets or local environment files. Provide sanitized examples such as `.env.example`, use least-privilege defaults, and treat changes to authentication, authorization, encryption, or secret lifecycle handling as security-sensitive reviews.
